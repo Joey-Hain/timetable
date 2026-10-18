@@ -245,7 +245,11 @@ def build(gtfs: Path, out: Path, today: date | None = None):
         first, last = stations[stops[0][0]], stations[stops[-1][0]]
         # up = towards Sydney (Central), as railways count it
         up = dist_km(last[1:], CENTRAL) < dist_km(first[1:], CENTRAL)
-        headsign = (part[0].get("stop_headsign") or "").strip()
+        # the headboard where it first takes and sets down passengers: a T8
+        # leaving Central round the City Circle (pick up only) says "City
+        # Circle via Town Hall" there, "Macarthur via Airport" after
+        full = [x for x in part if x["pickup_type"] != "1" and x["drop_off_type"] != "1" and (x.get("stop_headsign") or "").strip()]
+        headsign = ((full[0] if full else part[0]).get("stop_headsign") or "").strip()
         if not headsign or headsign.lower() in ("empty train", "special"):
             headsign = HEAD_NAMES.get(last[0], last[0])
         trip = {"r": tid.split(".")[0], "d": "up" if up else "down", "h": headsign,

@@ -40,33 +40,36 @@ window.TT_CONFIG = {
     { id: "south", name: "East Hills & Southern Highlands", lines: ["T8", "SHL", "STH"] },
   ],
 
-  // Timed changes, shown as a "Change at" row wherever every one of `lines`
-  // (if given) is in the timetable, a line on its own or a corridor, and
-  // there's a train to change between. Each pairs a
-  // secondary train with the first primary train it meets, allowing `minutes`
-  // (default 2) to change and waiting at most `maxMinutes` (default 30).
-  // `atUp` / `atDown` move the change for one direction (SHL: Campbelltown
-  // going south, Macarthur going north).
-  //   split:   feeder trains get rows of their own at these stations, so the
-  //            timetable reads one way through the change (Dungog - Hamilton,
-  //            change, Hamilton - Sydney). Feeders are trains of `feeders`
-  //            lines, or trains running only on `side` stations, that start
-  //            or end at the interchange.
-  //   express: an express / all-stations change: the all-stations trains
-  //            call at some of these stations, the expresses at none; only
-  //            all-stations trains starting or ending at one of `locals`.
+  // Timed changes, wherever every one of `lines` (if given) is in the
+  // timetable, a line on its own or a corridor, and there's a train to change
+  // between. The change station gets an arr row, a "Change at" row and a dep
+  // row (a through train has times in both). Each secondary train (a feeder)
+  // pairs with the first primary train it meets, allowing `minutes` (default
+  // 2) to change and waiting at most `maxMinutes` (default 30). `atUp` /
+  // `atDown` move the change for one direction (SHL: Campbelltown going
+  // south, Macarthur going north).
+  //   feeders: lines whose trains starting or ending at the change are the
+  //            secondary ones (HUN at Hamilton)
+  //   side:    or: trains running only on these stations and the change one
+  //            (the Bomaderry shuttle at Kiama)
+  //   express: or: the all-stations trains of an express / all-stations
+  //            change, calling at some of these stations where the expresses
+  //            call at none, starting or ending at one of `locals`
+  //   split:   stations the feeders get rows of their own at, either side of
+  //            the change: Broadmeadow, Newcastle Interchange (HUN), Hamilton
+  //            arr / change / dep, Newcastle Interchange (CCN), Waratah
   //   only:    both trains must be on these lines (no change to a booked
   //            regional train)
   interchanges: [
-    { at: "Hamilton", lines: ["HUN", "CCN"], feeders: ["HUN"], split: ["Hamilton", "Newcastle Interchange"] },
+    { at: "Hamilton", lines: ["HUN", "CCN"], feeders: ["HUN"], split: ["Newcastle Interchange"] },
     { at: "Thirroul", lines: ["SCO"], locals: ["Thirroul", "Waterfall"],
       express: ["Bulli", "Woonona", "Bellambi", "Corrimal", "Towradgi", "Fairy Meadow"] },
-    { at: "Kiama", lines: ["SCO"], split: ["Kiama"], side: ["Gerringong", "Berry", "Bomaderry (Nowra)"] },
-    { at: "Campbelltown", atUp: "Macarthur", lines: ["SHL", "T8"], feeders: ["SHL"], split: ["Campbelltown", "Macarthur"] },
-    { at: "Moss Vale", lines: ["SHL"], only: ["SHL"], split: ["Moss Vale"],
+    { at: "Kiama", lines: ["SCO"], side: ["Gerringong", "Berry", "Bomaderry (Nowra)"] },
+    { at: "Campbelltown", atUp: "Macarthur", lines: ["SHL", "T8"], feeders: ["SHL"] },
+    { at: "Moss Vale", lines: ["SHL"], only: ["SHL"],
       side: ["Exeter", "Bundanoon", "Penrose", "Wingello", "Tallong", "Marulan", "Goulburn"] },
-    { at: "Lithgow", lines: ["BMT"], only: ["BMT"], split: ["Lithgow"], side: ["Rydal", "Tarana", "Bathurst"] },
-    { at: "Lidcombe", feeders: ["T6", "T7"], split: ["Lidcombe"] },
+    { at: "Lithgow", lines: ["BMT"], only: ["BMT"], side: ["Rydal", "Tarana", "Bathurst"] },
+    { at: "Lidcombe", feeders: ["T6", "T7"] },
   ],
 
   // Lines whose trains run through Central from one half to the other under a

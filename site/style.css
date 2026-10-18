@@ -238,5 +238,4 @@ footer { font-size: 0.8rem; color: var(--muted); }
 .tt-scroll svg.arrows { position: absolute; z-index: 1; pointer-events: none; color: #555; overflow: visible; }
 .tt-scroll svg.arrows path { fill: none; stroke: currentColor; stroke-width: 1.2; }
 .tt-scroll svg.arrows marker path { fill: currentColor; stroke: none; }
-/* the wait sits to the right, clear of an arrow coming up the middle */
-.tt .wait { display: block; text-align: right; }
+.tt .stn .role { color: var(--muted); font-size: 0.72rem; margin-left: 0.25rem; }

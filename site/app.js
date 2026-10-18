@@ -125,7 +125,7 @@
       if ((i === 0 && flag === "u") || (last && flag === "d")) flag = "";
       const base = `${st}#${n}`;
       return { key: base + (split.get(st) || ""), base, st, arr, dep: arr + dwell,
-               t: last || flag === "p" ? arr : arr + dwell, plat, flag, last };
+               t: last || flag === "p" ? arr : arr + dwell, plat, flag, last, first: i === 0 };
     });
   }
 
@@ -380,28 +380,13 @@
   // secondary -> primary pairs; or null if the interchange isn't in view.
   function connections(trips, rows, ix, n, at) {
     const mk = `${at}#1`;
-    const sk = ix.split ? `${mk}~${n}` : mk;
-    const mi = rows.indexOf(mk), si = rows.indexOf(sk);
-    if (mi < 0 || si < 0) return null;
-    let secondaryFirst, isSecondary, after;
-    if (ix.split) {
-      secondaryFirst = si < mi;
-      isSecondary = (t) => t.byKey.has(sk);
-      const own = rows.map((k, i) => (k.endsWith(`~${n}`) ? i : -1)).filter((i) => i >= 0);
-      after = secondaryFirst ? Math.max(...own) : Math.min(...own) - 1;
-    } else {
-      // all-stations trains call at some of ix.express, the expresses at none
-      const skip = new Set(ix.express.map((name) => state.byName.get(name)));
-      const skipRows = rows.map((k, i) => (skip.has(Number(k.split("#")[0])) ? i : -1)).filter((i) => i >= 0);
-      if (!skipRows.length) return null;
-      secondaryFirst = skipRows[0] < mi;   // the locals have been calling before the change
-      // locals that start (or, going the other way, end) at one of ix.locals:
-      // an all-stations train through from Sydney isn't part of the change
-      const ends = new Set((ix.locals || [ix.at]).map((name) => state.byName.get(name)));
-      isSecondary = (t) => t.stops.some((x) => skip.has(x.st) && x.flag !== "p") &&
-        ends.has((secondaryFirst ? t.stops[t.stops.length - 1] : t.stops[0]).st);
-      after = mi;
-    }
+    if (!rows.includes(mk)) return null;
+    const isSecondary = (t) => !!(t.feeds && t.feeds.has(n));
+    const feeders = trips.filter((t) => isSecondary(t) && t.byKey.has(mk));
+    if (!feeders.length) return null;
+    // the feeders arrive (ending at or just past the change) or leave
+    const pos = (t) => t.stops.findIndex((x) => x.key === mk) / Math.max(1, t.stops.length - 1);
+    const secondaryFirst = feeders.filter((t) => pos(t) > 0.5).length * 2 >= feeders.length;
     const gap = (ix.minutes ?? 2) * 60, most = (ix.maxMinutes ?? 30) * 60;
     const calls = (t, k) => { const x = t.byKey.get(k); return x && x.flag !== "p" ? x : null; };
     // ix.only: both trains on these lines (no change into a regional train,
@@ -411,12 +396,12 @@
     const prim = trips.filter((t) => !t.e && ok(t) && !isSecondary(t) && calls(t, mk));
     const cells = new Map(), pairs = new Map(), arrows = [], arrowCells = new Map();
     const add = (t, html) => cells.set(t, (cells.get(t) ? cells.get(t) + "<br>" : "") + html);
-    for (const t of trips) {
-      const s = !t.e && ok(t) && isSecondary(t) && calls(t, sk);
+    for (const t of feeders) {
+      const s = !t.e && ok(t) && calls(t, mk);
       if (!s) continue;
-      // a feeder has to start or end here; one running through is a main-line train
-      if (ix.split && !(secondaryFirst ? t.stops[t.stops.length - 1].key === sk || t.stops.slice(-2).some((x) => x.key === sk)
-                                       : t.stops[0].key === sk || t.stops.slice(0, 2).some((x) => x.key === sk))) continue;
+      // a feeder starts or ends here (or one stop on: HUN to Newcastle);
+      // all-stations trains (express changes) can run through
+      if (!ix.express && !(secondaryFirst ? t.stops.slice(-2) : t.stops.slice(0, 2)).some((x) => x.key === mk)) continue;
       let best = null;
       for (const m of prim) {
         const ms = calls(m, mk);
@@ -432,22 +417,32 @@
       const mins = Math.round(best.wait / 60);
       const wait = `<span class="work">, ${mins} min</span>`;
       const [inT, inS, outT, outS] = secondaryFirst ? [t, s, best.m, ms] : [best.m, ms, t, s];
-      // arrow mode (?arrows=1): a line from the arriving train to the leaving
-      // one, as the NSW TrainLink regional timetables draw connections
-      arrows.push({ inT, inKey: secondaryFirst ? sk : mk, outT, outKey: secondaryFirst ? mk : sk });
-      if (!arrowCells.has(outT)) arrowCells.set(outT, `<span class="work wait">${mins} min</span>`);
+      // arrow mode (?arrows=1): from the arriving train's arr time to the
+      // leaving train's dep time, as the NSW TrainLink regional timetables
+      arrows.push({ inT, inKey: `${mk}|arr`, outT, outKey: `${mk}|dep`, mins });
+      if (!arrowCells.has(outT)) arrowCells.set(outT, `<span class="work">${mins} min</span>`);
       add(inT, `to <b>${esc(outT.r)}</b><br><span class="work">dep ${hhmm(outS.dep)}</span>${wait}`);
       add(outT, `from <b>${esc(inT.r)}</b><br><span class="work">arr ${hhmm(inS.arr)}</span>`);
     }
     if (!pairs.size) return null;
-    return { after, cells, pairs, arrows, arrowCells, secondaryFirst, label: `Change at ${state.stations[at][0]}` };
+    return { key: mk, cells, pairs, arrows, arrowCells, secondaryFirst, label: `Change at ${state.stations[at][0]}` };
   }
 
   const KIND = { ecs: "Empty cars", mtpv: "MTPV", special: "Special", charter: "Charter" };
   const KIND_COLOUR = { ecs: "#888888", mtpv: "#8a6a3a", special: "#7a4f9e", charter: "#7a4f9e" };
 
-  function cell(s, opts, t) {
+  // to the half minute, for an interchange's arr and dep rows: 18:02½
+  const hhmm30 = (t) => { const r = Math.round(t / 30) * 30; return hhmm(r) + (r % 60 ? "½" : ""); };
+
+  function cell(s, opts, t, role) {
     if (!s) return "<td></td>";
+    // an interchange's arr and dep rows: when trains get there and when they
+    // leave (a through train in both), to the half minute
+    let shown = hhmm(s.t);
+    if (role && s.flag !== "p") {
+      if (role === "arr" ? s.first : s.last) return "<td></td>";
+      shown = hhmm30(role === "arr" ? s.arr : s.dep);
+    }
     const title = [`${s.flag === "p" ? "passes" : "arr"} ${hhmmss(s.arr)}`];
     if (s.flag !== "p" && s.dep !== s.arr) title.push(`dep ${hhmmss(s.dep)}`);
     if (s.plat) title.push(`platform ${s.plat}`);
@@ -455,14 +450,15 @@
     // empty runs and MTPV: every timing point; specials and charters as
     // trains, greyed
     if (t && t.e && (s.flag !== "p" || t.c === "ecs" || t.c === "mtpv")) {
-      return `<td class="ecs"${attr}>${hhmm(s.t)}${s.flag && s.flag !== "p" ? `<span class="flag">${s.flag}</span>` : ""}</td>`;
+      return `<td class="ecs"${attr}>${shown}${s.flag && s.flag !== "p" ? `<span class="flag">${s.flag}</span>` : ""}</td>`;
     }
     if (s.flag === "p") {
-      return opts.pass ? `<td class="pass"${attr}>${hhmm(s.t)}</td>` : `<td class="pass"${attr}>|</td>`;
+      const pplat = opts.plat && s.plat ? `<span class="plat">${esc(s.plat)}</span>` : "";
+      return opts.pass ? `<td class="pass"${attr}>${hhmm(s.t)}${pplat}</td>` : `<td class="pass"${attr}>|${pplat}</td>`;
     }
     const flag = s.flag ? `<span class="flag">${s.flag}</span>` : "";
     const plat = opts.plat && s.plat ? `<span class="plat">${esc(s.plat)}</span>` : "";
-    return `<td${attr}>${hhmm(s.t)}${flag}${plat}</td>`;
+    return `<td${attr}>${shown}${flag}${plat}</td>`;
   }
 
   function table(trips, master, opts, allTrips) {
@@ -491,16 +487,23 @@
     master.forEach((key, i) => {
       const st = Number(key.split("#")[0]);
       const gap = i && !next.has(master[i - 1] + ">" + key) ? ' class="gap"' : "";
-      h += `<tr${gap} data-k="${key}"><th class="stn">${esc(names[st][0])}</th>` + trips.map((t) => cell(t.byKey.get(key), opts, t)).join("") + "</tr>";
+      const here = (opts.changes || []).filter((c) => c.key === key);
+      const row = (k, role, cls) => `<tr${cls} data-k="${k}"><th class="stn">${esc(names[st][0])}${role ? ` <span class="role">${role}</span>` : ""}</th>` +
+        trips.map((t) => cell(t.byKey.get(key), opts, t, role)).join("") + "</tr>";
+      if (!here.length) h += row(key, "", gap);
+      else {
+        // a timed change: arr row, "Change at" row, dep row
+        h += row(`${key}|arr`, "arr", gap);
+        for (const c of here) {
+          h += `<tr class="change"><th class="stn">${esc(c.label)}</th>` +
+            trips.map((t) => `<td>${(opts.arrows ? c.arrowCells : c.cells).get(t) || ""}</td>`).join("") + "</tr>";
+        }
+        h += row(`${key}|dep`, "dep", "");
+      }
       // through trains change run number here (T1 at Central Electric)
       if (key === opts.throughKey && trips.some((t) => t.rb)) {
         h += '<tr class="change"><th class="stn">Continues as</th>' + trips.map((t) =>
           `<td>${t.rb && t.byKey.has(key) ? `<b>${esc(t.rb)}</b>` : ""}</td>`).join("") + "</tr>";
-      }
-      for (const c of opts.changes || []) {
-        if (c.after !== i) continue;
-        h += `<tr class="change"><th class="stn">${esc(c.label)}</th>` +
-          trips.map((t) => `<td>${(opts.arrows ? c.arrowCells : c.cells).get(t) || ""}</td>`).join("") + "</tr>";
       }
     });
     // a regional train cut to this area says where it goes on to or came from
@@ -548,8 +551,12 @@
 
   const arrowMode = params.get("arrows") === "1";
 
-  // Connection arrows over the table: down from below the arriving train's
-  // last time to the row the other train leaves from, then across to it
+  // Connection arrows over the table, as the NSW TrainLink regional
+  // timetables draw them. A shared row (Hamilton): straight along it from one
+  // train's time to the other's. Arr and dep rows: down from the arriving
+  // time into the "Change at" row, across to the other train and down to its
+  // departure. A line stops short of any time it would cross and carries on
+  // the other side.
   function drawArrows(changes, cols) {
     const scroll = el.table.querySelector(".tt-scroll");
     const table = scroll && scroll.querySelector(".tt");
@@ -559,37 +566,79 @@
     const rows = [...table.querySelectorAll("tbody tr")];
     const rowOf = new Map(rows.filter((r) => r.dataset.k).map((r) => [r.dataset.k, r]));
     const base = table.getBoundingClientRect();
-    const box = (c) => { const r = c.getBoundingClientRect(); return { l: r.left - base.left, r: r.right - base.left, t: r.top - base.top, b: r.bottom - base.top }; };
-    let d = "";
+    const rel = (r) => ({ l: r.left - base.left, r: r.right - base.left, t: r.top - base.top, b: r.bottom - base.top });
+    const box = (c) => rel(c.getBoundingClientRect());
+    const range = document.createRange();
+    // the text in a cell, padded, or null
+    const text = (c) => {
+      if (!c || !c.textContent.trim()) return null;
+      range.selectNodeContents(c);
+      const r = rel(range.getBoundingClientRect());
+      return { l: r.l - 3, r: r.r + 3, t: r.t - 2, b: r.b + 2 };
+    };
+    // a straight run cut where it crosses text: [[from, to], ...]
+    const cut = (a, b, blocks) => {
+      const lo = Math.min(a, b), hi = Math.max(a, b);
+      let parts = [[lo, hi]];
+      for (const [x, y] of blocks) {
+        parts = parts.flatMap(([p, q]) => (y <= p || x >= q ? [[p, q]] : [[p, x], [y, q]].filter(([u, v]) => v - u > 2)));
+      }
+      return a <= b ? parts : parts.reverse().map(([p, q]) => [q, p]);
+    };
+    const across = (y, x0, x1, ri, cLo, cHi) => {
+      const blocks = [];
+      for (let c = cLo; c <= cHi; c++) {
+        const tb = text(rows[ri].cells[c]);
+        if (tb && tb.t < y && tb.b > y) blocks.push([tb.l, tb.r]);
+      }
+      return cut(x0, x1, blocks).map(([p, q]) => `M${p},${y}H${q}`);
+    };
+    const down = (x, y0, y1, ci, rLo, rHi) => {
+      const blocks = [];
+      for (let r = rLo; r <= rHi; r++) {
+        const tb = text(rows[r] && rows[r].cells[ci]);
+        if (tb && tb.l < x && tb.r > x) blocks.push([tb.t, tb.b]);
+      }
+      return cut(y0, y1, blocks).map(([p, q]) => `M${x},${p}V${q}`);
+    };
+    const lines = [], heads = [];
     for (const c of changes) {
       for (const a of c.arrows) {
         const ci = col.get(a.inT), co = col.get(a.outT), ri = rowOf.get(a.inKey), ro = rowOf.get(a.outKey);
         if (!ci || !co || !ri || !ro) continue;
         const iIn = rows.indexOf(ri), iOut = rows.indexOf(ro);
-        let from = ri;  // a train running on past the change (CCN to Newcastle) starts below its last time
-        for (let k = iIn + 1; k < iOut; k++) if (rows[k].dataset.k && rows[k].cells[ci] && rows[k].cells[ci].textContent.trim()) from = rows[k];
-        const s = box(from.cells[ci]), t = box(ro.cells[co]);
-        const x0 = (s.l + s.r) / 2, tc = (t.l + t.r) / 2, half = 21;
-        const x1 = co > ci ? tc - half : tc + half;
-        if (iOut > iIn) d += `M${x0},${s.b - 3}V${(t.t + t.b) / 2}H${x1}`;
-        else {
-          // same row (express and all stations at Thirroul): down into the
-          // "Change at" row below, across, and up into the other train
-          const under = rows[iOut + 1] && rows[iOut + 1].classList.contains("change") ? box(rows[iOut + 1].cells[0]) : null;
-          const y = under ? (under.t + under.b) / 2 : s.b + 6;
-          d += `M${x0},${s.b - 3}V${y}H${tc}V${t.b - 3}`;
+        const s = text(ri.cells[ci]), t = text(ro.cells[co]);
+        if (!s || !t) continue;
+        const right = co > ci;
+        let segs;
+        if (iIn === iOut) {
+          const y = (box(ri.cells[ci]).t + box(ri.cells[ci]).b) / 2;
+          segs = across(y, right ? s.r : s.l, right ? t.l : t.r, iIn, Math.min(ci, co) + 1, Math.max(ci, co) - 1);
+        } else {
+          const x0 = (s.l + s.r) / 2, x1 = (t.l + t.r) / 2;
+          const mid = rows.slice(iIn + 1, iOut).find((r) => r.classList.contains("change"));
+          const y = mid ? (box(mid.cells[0]).t + box(mid.cells[0]).b) / 2 : (s.b + t.t) / 2;
+          const iy = mid ? rows.indexOf(mid) : iIn;
+          segs = [
+            ...down(x0, s.b, y, ci, iIn + 1, iy),
+            ...across(y, x0, x1, iy, Math.min(ci, co), Math.max(ci, co)).filter(Boolean),
+            ...down(x1, y, t.t, co, iy, iOut - 1),
+          ];
         }
+        if (!segs.length) continue;
+        heads.push(segs.pop());
+        lines.push(...segs);
       }
     }
-    if (!d) return;
+    if (!heads.length) return;
     const ns = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(ns, "svg");
     svg.setAttribute("class", "arrows");
     svg.setAttribute("width", table.offsetWidth);
     svg.setAttribute("height", table.offsetHeight);
-    svg.innerHTML = `<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">` +
-      `<path d="M0,1L9,5L0,9z" fill="currentColor"/></marker></defs>` +
-      d.split("M").filter(Boolean).map((p) => `<path d="M${p}" marker-end="url(#ah)"/>`).join("");
+    svg.innerHTML = `<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">` +
+      `<path d="M0,1L9,5L0,9z"/></marker></defs>` +
+      lines.map((d) => `<path d="${d}"/>`).join("") + heads.map((d) => `<path d="${d}" marker-end="url(#ah)"/>`).join("");
     svg.style.left = table.offsetLeft + "px";
     svg.style.top = table.offsetTop + "px";
     scroll.appendChild(svg);
@@ -634,9 +683,13 @@
     const dir = el.dir.value;
     const active = (C.interchanges || []).map((ix, n) => ({ ix, n, at: byName.get((dir === "up" ? ix.atUp : ix.atDown) || ix.at) }))
       .filter(({ ix, at }) => at !== undefined && (ix.lines || []).every((l) => codes.includes(l) && !missing.includes(l)));
-    const splits = active.filter(({ ix }) => ix.split).map(({ ix, n }) => ({
-      ix, suffix: `~${n}`,
-      ids: new Set(ix.split.map((name) => byName.get(name))),
+    const splits = active.map(({ ix, n }) => ({
+      ix, n, suffix: `~${n}`,
+      own: new Set((ix.split || []).map((name) => byName.get(name))),
+      ends: new Set([...(ix.split || []), ix.at, ix.atUp, ix.atDown].filter(Boolean).map((name) => byName.get(name))),
+      skip: ix.express ? new Set(ix.express.map((name) => byName.get(name))) : null,
+      locals: ix.express ? new Set((ix.locals || [ix.at]).map((name) => byName.get(name))) : null,
+      ids: null,
       side: ix.side ? new Set(ix.side.map((name) => byName.get(name))) : null,
     }));
     const all = [];
@@ -652,12 +705,19 @@
         // a main-line train)
         for (const sp of splits) {
           if (trip.e) break;
-          const ends = sp.ids.has(s[0][0]) || sp.ids.has(s[s.length - 1][0]);
-          const feeder = sp.ix.feeders ? sp.ix.feeders.includes(line)
-            : s.every(([st, , , , flag]) => flag === "p" || sp.ids.has(st) || sp.side.has(st));
+          // express changes: the all-stations trains starting or ending at
+          // one of ix.locals (Thirroul, Waterfall) are the feeders
+          const ends = sp.skip ? sp.locals.has(s[0][0]) || sp.locals.has(s[s.length - 1][0])
+            : sp.ends.has(s[0][0]) || sp.ends.has(s[s.length - 1][0]);
+          const feeder = sp.skip ? s.some(([st, , , , flag]) => flag !== "p" && sp.skip.has(st))
+            : sp.ix.feeders ? sp.ix.feeders.includes(line)
+            : sp.side ? s.every(([st, , , , flag]) => flag === "p" || sp.ends.has(st) || sp.side.has(st)) : false;
           if (ends && feeder) {
+            // their own rows at the split stations (Newcastle Interchange)
             trip.split = trip.split || new Map();
-            for (const id of sp.ids) trip.split.set(id, sp.suffix);
+            for (const id of sp.own) trip.split.set(id, sp.suffix);
+            trip.feeds = trip.feeds || new Set();
+            trip.feeds.add(sp.n);
           }
         }
         all.push(trip);
@@ -695,6 +755,23 @@
     sortTrips(trips);
     // stations: every one a train stops at today (or passes, with passing times on)
     const master = stationOrder(trips.filter((t) => !t.e).length ? trips.filter((t) => !t.e) : trips);
+    // a change with split stations (Hamilton): the feeders' copies of them on
+    // one side of the change station, the main line's on the other, all hard
+    // against it: Broadmeadow, Newcastle Interchange (HUN), Hamilton arr,
+    // change, Hamilton dep, Newcastle Interchange (CCN), Waratah
+    const move = (key, next, after) => {
+      if (!master.includes(key) || !master.includes(next) || key === next) return;
+      master.splice(master.indexOf(key), 1);
+      master.splice(master.indexOf(next) + (after ? 1 : 0), 0, key);
+    };
+    for (const { ix, n, at } of active) {
+      if (!ix.split) continue;
+      const mk = `${at}#1`, own = master.filter((k) => k.endsWith(`~${n}`));
+      if (!master.includes(mk) || !own.length) continue;
+      const before = master.indexOf(own[0]) < master.indexOf(mk);
+      for (const k of own) move(k, mk, !before);
+      for (const k of own) move(k.replace(/~\d+$/, ""), mk, before);
+    }
     let used = master.filter((k) => trips.some((t) => {
       const s = t.byKey.get(k);
       return s && (s.flag !== "p" || el.pass.checked);
