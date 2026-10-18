@@ -64,4 +64,8 @@ for path in CANDIDATES:
     for k in sorted(per_day):
         if k >= "2026-10-18":
             print(f"  {k} {per_day[k]}")
-    os.remove(out)
+    if os.environ.get("KEEP"):
+        os.makedirs("keep", exist_ok=True)
+        os.replace(out, "keep/" + path.strip("/").replace("/", "_") + ".zip")
+    else:
+        os.remove(out)

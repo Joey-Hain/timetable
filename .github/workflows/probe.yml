@@ -4,6 +4,9 @@ on:
     inputs:
       paths:
         default: ""
+      keep:
+        description: "save the downloaded zips to the diag branch (under 95 MB each)"
+        default: ""
 permissions:
   contents: write
 jobs:
@@ -19,6 +22,7 @@ jobs:
       - name: Probe
         env:
           TFNSW_KEY: ${{ secrets.TFNSW_KEY }}
+          KEEP: ${{ github.event.inputs.keep }}
         run: python tools/probe.py ${{ github.event.inputs.paths }} 2>&1 | tee probe.txt
       - name: Publish output to the diag branch
         if: always()
@@ -27,6 +31,7 @@ jobs:
         run: |
           mkdir pub && cd pub && git init -q -b diag
           cp ../probe.txt .
+          [ -d ../keep ] && find ../keep -size -95M -name '*.zip' -exec cp {} . \; || true
           git add -A
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m probe
           git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:diag
