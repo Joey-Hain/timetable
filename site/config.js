@@ -47,7 +47,8 @@ window.TT_CONFIG = {
   // pairs with the first primary train it meets, allowing `minutes` (default
   // 2) to change and waiting at most `maxMinutes` (default 30). `atUp` /
   // `atDown` move the change for one direction (SHL: Campbelltown going
-  // south, Macarthur going north).
+  // south, Macarthur going north); a list picks whichever of its stations
+  // has the shorter waits that day (Helensburgh weekdays, Thirroul weekends).
   //   feeders: lines whose trains starting or ending at the change are the
   //            secondary ones (HUN at Hamilton)
   //   side:    or: trains running only on these stations and the change one
@@ -62,8 +63,9 @@ window.TT_CONFIG = {
   //            regional train)
   interchanges: [
     { at: "Hamilton", lines: ["HUN", "CCN"], feeders: ["HUN"], split: ["Newcastle Interchange"] },
-    { at: "Thirroul", lines: ["SCO"], locals: ["Thirroul", "Waterfall"],
+    { at: ["Helensburgh", "Thirroul"], lines: ["SCO"], locals: ["Thirroul", "Waterfall"],
       express: ["Bulli", "Woonona", "Bellambi", "Corrimal", "Towradgi", "Fairy Meadow"] },
+    { at: "Waterfall", lines: ["T4", "SCO"], feeders: ["T4"] },
     { at: "Kiama", lines: ["SCO"], side: ["Gerringong", "Berry", "Bomaderry (Nowra)"] },
     { at: "Campbelltown", atUp: "Macarthur", lines: ["SHL", "T8"], feeders: ["SHL"] },
     { at: "Moss Vale", lines: ["SHL"], only: ["SHL"],
@@ -80,6 +82,8 @@ window.TT_CONFIG = {
     { at: "Blacktown", stations: ["Marayong", "Quakers Hill", "Schofields", "Riverstone", "Vineyard", "Mulgrave",
                                   "Windsor", "Clarendon", "East Richmond", "Richmond"] },
     { at: "Glenfield", stations: ["Edmondson Park", "Leppington"] },
+    { at: "Maitland", stations: ["Telarah", "Mindaribba", "Paterson", "Martins Creek", "Hilldale", "Wallarobba",
+                                 "Wirragulla", "Dungog"] },
   ],
 
   // Lines whose trains run through Central from one half to the other under a

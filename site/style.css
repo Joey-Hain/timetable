@@ -241,3 +241,6 @@ footer { font-size: 0.8rem; color: var(--muted); }
 .tt .stn .role { color: var(--muted); font-size: 0.72rem; margin-left: 0.25rem; }
 /* branch stations, indented under their junction */
 .tt .stn.branch { padding-left: 1.3rem; }
+/* run search: a heading over each line's table */
+.run-head { font-size: 0.85rem; font-weight: normal; color: var(--muted); margin: 1.2rem 0 0.4rem; }
+.run-head:first-child { margin-top: 0; }

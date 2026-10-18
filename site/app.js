@@ -541,17 +541,22 @@
 
   // One run on its own (the Run box): every line that day, non-revenue
   // included, through trains joined, its whole journey
+  // Runs on their own (the Run box): every line that day, non-revenue
+  // included, through trains joined, whole journeys. * stands for any
+  // characters: 200* is 200A, 200B...; *360 is N360, W360, C360...
   async function renderRun(run, day, id) {
     const codes = Object.keys(state.index.lines).filter((c) => state.index.lines[c].dates[day]);
+    const re = new RegExp("^" + run.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$", "i");
+    const hit = (x) => re.test(x.r) || (x.rb && re.test(x.rb));
     el.table.innerHTML = '<div class="empty">Loading…</div>';
-    let found = null;
+    state.arrows = null;
+    const groups = [];
     try {
       for (const c of codes) {
         const f = await getJSON(`lines/${encodeURIComponent(c)}/${state.index.lines[c].dates[day]}.json`);
         const thr = C.through && C.through[c];
-        const t = (thr ? joinThrough(f.trips, thr) : f.trips)
-          .find((x) => x.r.toUpperCase() === run || (x.rb || "").toUpperCase() === run);
-        if (t) { found = { ...t, line: c, e: c === "X" ? 1 : 0 }; break; }
+        const found = (thr ? joinThrough(f.trips, thr) : f.trips).filter(hit).map((t) => ({ ...t, line: c, e: c === "X" ? 1 : 0 }));
+        if (found.length) groups.push([c, found]);
       }
     } catch (e) {
       if (id === renderId) el.table.innerHTML = `<div class="empty">Couldn't load the timetable (${esc(e.message)}).</div>`;
@@ -559,20 +564,31 @@
     }
     if (id !== renderId) return;
     el.note.hidden = true;
-    if (!found) {
+    if (!groups.length) {
       el.table.innerHTML = `<div class="empty">No run ${esc(run)} on ${esc(day)}.</div>`;
       return;
     }
-    found.dir = found.d;
-    found.stops = keyed(found);
-    found.byKey = new Map(found.stops.map((s) => [s.key, s]));
-    const rows = found.stops.filter((s) => s.flag !== "p" || el.pass.checked || found.e).map((s) => s.key);
-    const thr = C.through && C.through[found.line];
-    el.table.innerHTML = table([found], rows, { pass: el.pass.checked, plat: el.plat.checked, changes: [],
-      throughKey: thr ? `${state.byName.get(thr.at)}#1` : null }, [found]);
+    // one table per line and direction
+    let html = "";
+    for (const [c, found] of groups) {
+      orient(found);
+      const thr = C.through && C.through[c];
+      for (const dir of ["down", "up"]) {
+        const ts = found.filter((t) => t.dir === dir);
+        if (!ts.length) continue;
+        for (const t of ts) { t.stops = keyed(t); t.byKey = new Map(t.stops.map((x) => [x.key, x])); }
+        sortTrips(ts);
+        const rows = stationOrder(ts).filter((k) => ts.some((t) => { const x = t.byKey.get(k); return x && (x.flag !== "p" || el.pass.checked || t.e); }));
+        const name = c === "X" ? "Non-revenue" : lineLabel(c);
+        const way = thr ? thr.labels[dir === "down" ? 0 : 1] : dir === "down" ? "Down" : "Up";
+        html += `<h2 class="run-head">${esc(name)}, ${esc(way)}</h2>` + table(ts, rows, { pass: el.pass.checked, plat: el.plat.checked, changes: [],
+          throughKey: thr ? `${state.byName.get(thr.at)}#1` : null }, ts);
+      }
+    }
+    el.table.innerHTML = html;
   }
 
-  const arrowMode = params.get("arrows") === "1";
+  const arrowMode = params.get("arrows") !== "0";  // ?arrows=0: the text version
 
   // Connection arrows over the table, as the NSW TrainLink regional
   // timetables draw them. A shared row (Hamilton): straight along it from one
@@ -704,12 +720,27 @@
     const byName = state.byName;
     // interchanges in view: every line they need is shown
     const dir = el.dir.value;
-    const active = (C.interchanges || []).map((ix, n) => ({ ix, n, at: byName.get((dir === "up" ? ix.atUp : ix.atDown) || ix.at) }))
-      .filter(({ ix, at }) => at !== undefined && (ix.lines || []).every((l) => codes.includes(l) && !missing.includes(l)));
+    // `at` can be a list: whichever is better timed that day (Helensburgh on
+    // weekdays, Thirroul at weekends)
+    const active = (C.interchanges || []).map((ix, n) => {
+      const alts = [].concat((dir === "up" ? ix.atUp : ix.atDown) || ix.at).map((name) => byName.get(name)).filter((x) => x !== undefined);
+      return { ix, n, alts, at: alts[0] };
+    }).filter(({ ix, at }) => at !== undefined && (ix.lines || []).every((l) => codes.includes(l) && !missing.includes(l)));
+    const change = (rows, { ix, n, alts }) => {
+      let best = null;
+      for (const at of alts) {
+        const c = connections(trips, rows, ix, n, at);
+        if (!c) continue;
+        const w = c.arrows.map((a) => a.mins).sort((x, y) => x - y);
+        c.median = w[Math.floor(w.length / 2)];
+        if (!best || c.median < best.median) best = c;
+      }
+      return best;
+    };
     const splits = active.map(({ ix, n }) => ({
       ix, n, suffix: `~${n}`,
       own: new Set((ix.split || []).map((name) => byName.get(name))),
-      ends: new Set([...(ix.split || []), ix.at, ix.atUp, ix.atDown].filter(Boolean).map((name) => byName.get(name))),
+      ends: new Set([...(ix.split || []), ...[].concat(ix.at), ix.atUp, ix.atDown].filter(Boolean).map((name) => byName.get(name))),
       skip: ix.express ? new Set(ix.express.map((name) => byName.get(name))) : null,
       locals: ix.express ? new Set((ix.locals || [ix.at]).map((name) => byName.get(name))) : null,
       ids: null,
@@ -822,8 +853,8 @@
     // a secondary train that takes passengers on from a primary one (HUN in
     // the Down direction) goes with the train it connects from
     const follow = new Map();
-    for (const { ix, n, at } of active) {
-      const c = connections(trips, used, ix, n, at);
+    for (const a of active) {
+      const c = change(used, a);
       if (c && !c.secondaryFirst) for (const [t, m] of c.pairs) if (!follow.has(t)) follow.set(t, m);
     }
     const inRange = trips.filter((t) => {
@@ -836,7 +867,7 @@
     }));
     el.note.textContent = notes.join(" ");
     el.note.hidden = !notes.length;
-    const changes = active.map(({ ix, n, at }) => connections(trips, used, ix, n, at)).filter(Boolean);
+    const changes = active.map((a) => change(used, a)).filter(Boolean);
     // each secondary train sits next to the one it connects with: before it
     // when it brings passengers in, after it when it takes them on
     let cols = inRange;
