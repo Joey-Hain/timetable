@@ -20,7 +20,8 @@ part of a trip that carries passengers is kept, so an "Empty Train" that runs in
 service for part of its journey still shows for that part.
 
 The Sydney Trains feed also carries the NSW TrainLink intercity and regional
-trains (as Sydney Trains sees them), so it's the only feed needed.
+trains (as Sydney Trains sees them), so it's the only feed needed. Its regional
+trains are only right inside Sydney Trains' own area, so they're cut to that.
 """
 from __future__ import annotations
 
@@ -208,6 +209,28 @@ def build(gtfs: Path, out: Path, today: date | None = None):
             if nxt:
                 day_trip["f"] = nxt    # forms
             by_line_day[(line, d)].append(day_trip)
+
+    # The regional trains as Sydney Trains has them are only right inside its
+    # own (suburban and intercity) area, so cut them to their longest stretch
+    # of stations Sydney Trains' own trains run through
+    served = {s[0] for (line, d), trips in by_line_day.items() if line not in REGIONAL
+              for t in trips for s in t["s"]}
+    for (line, d), trips in by_line_day.items():
+        if line not in REGIONAL:
+            continue
+        kept = []
+        for t in trips:
+            best, cur = None, None
+            for i, s in enumerate(t["s"]):
+                if s[0] in served:
+                    cur = [cur[0], i] if cur else [i, i]
+                    if not best or cur[1] - cur[0] > best[1] - best[0]:
+                        best = list(cur)
+                else:
+                    cur = None
+            if best and best[1] > best[0]:
+                kept.append({**t, "s": t["s"][best[0]:best[1] + 1]})
+        trips[:] = kept
 
     # one file per distinct service day of each line
     (out / "lines").mkdir(parents=True, exist_ok=True)

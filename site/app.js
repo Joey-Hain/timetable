@@ -47,7 +47,7 @@
     const corridors = C.corridors.filter((c) => c.lines.some((l) => lines[l]));
     const opt = (v, t) => `<option value="${esc(v)}">${esc(t)}</option>`;
     el.line.innerHTML =
-      `<optgroup label="Corridors">${corridors.map((c) => opt("c:" + c.id, `${c.name} (${c.lines.join(" + ")})`)).join("")}</optgroup>` +
+      `<optgroup label="Corridors">${corridors.map((c) => opt("c:" + c.id, c.name)).join("")}</optgroup>` +
       [["suburban", "Sydney Trains"], ["intercity", "Intercity"], ["regional", "Regional"]]
         .filter(([k]) => groups[k].length)
         .map(([k, label]) => `<optgroup label="${label}">${groups[k].map((c) => opt("l:" + c, lineLabel(c))).join("")}</optgroup>`)
@@ -144,6 +144,31 @@
       if (pending.length) master.push(...pending);
     }
     return master;
+  }
+
+  // The part of a train's run inside a corridor (see config.js), or null.
+  function clip(stops, c) {
+    if (!c.stations && !c.exclude) return stops;
+    const name = (st) => state.stations[st][0];
+    const keep = c.stations ? new Set(c.stations) : null;
+    const drop = new Set(c.exclude || []);
+    const inside = (st) => (keep ? keep.has(name(st)) : !drop.has(name(st)));
+    const runs = [];
+    let cur = null;
+    stops.forEach((s, i) => {
+      if (inside(s[0])) {
+        if (!cur) runs.push((cur = { a: i, b: i }));
+        cur.b = i;
+      } else cur = null;
+    });
+    if (!runs.length) return null;
+    const via = new Set(c.dropVia || []);
+    for (let k = 1; k < runs.length; k++) {
+      for (let i = runs[k - 1].b + 1; i < runs[k].a; i++) if (via.has(name(stops[i][0]))) return null;
+    }
+    const calls = (r) => stops.slice(r.a, r.b + 1).filter((s) => s[4] !== "p").length;
+    const best = runs.reduce((x, y) => (calls(y) > calls(x) ? y : x));
+    return calls(best) >= 2 ? stops.slice(best.a, best.b + 1) : null;
   }
 
   // Split trains into the two directions by the order they visit stations,
@@ -293,8 +318,14 @@
     }
     if (id !== renderId) return;
 
+    const corridor = el.line.value.startsWith("c:") ? C.corridors.find((c) => "c:" + c.id === el.line.value) : null;
     const all = [];
-    for (const [line, f] of files) for (const t of f.trips) all.push({ ...t, line });
+    for (const [line, f] of files) {
+      for (const t of f.trips) {
+        const s = corridor ? clip(t.s, corridor) : t.s;
+        if (s) all.push({ ...t, s, line });
+      }
+    }
     orient(all);
     const trips = [];
     for (const t of all) {
