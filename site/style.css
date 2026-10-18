@@ -218,10 +218,25 @@ p { text-align: justify; text-justify: inter-word; }
 .key .pass { color: var(--faint); }
 footer { font-size: 0.8rem; color: var(--muted); }
 
+/* phones: the line, date and direction, the rest behind "More options" */
+.tools .more { display: none; }
+.tools .more[hidden] { display: none !important; }
 @media (max-width: 700px) {
-  .page { padding: 1.25rem; }
-  .tools { grid-template-columns: 1fr 1fr; }
+  .page { padding: 1rem; }
+  h1 { font-size: 1.6rem; margin: 0.4rem 0 0.8rem; }
+  .tools { grid-template-columns: 1fr 1fr; gap: 0.6rem 0.75rem; }
   .tools .wide { grid-column: 1 / -1; }
+  .tools label { font-size: 0.75rem; }
+  .tools select, .tools input:not([type="checkbox"]) { height: 2.6rem; font-size: 1rem; }   /* 16px: no zoom on focus */
+  .tools .check { height: 2rem; font-size: 0.9rem; }
+  .tools .more {
+    display: block; grid-column: 1 / -1; height: 2.4rem; font: inherit; font-size: 0.9rem;
+    color: var(--text); background: #f6f6f6; border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+  }
+  .tools .more::after { content: " \25BE"; }
+  .tools.open .more::after { content: " \25B4"; }
+  .tools:not(.open) .opt { display: none; }
+  .tools .full { grid-column: 1 / -1; }   /* Non-revenue on its own, so Run and Whole day pair up */
   .tt-wrap { padding: 0 0.5rem; max-width: calc(100vw - 1rem); }
   .tt { font-size: 0.75rem; }
   .tt .stn { max-width: 7.5rem; overflow: hidden; text-overflow: ellipsis; }

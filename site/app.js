@@ -1150,9 +1150,11 @@
   let renderId = 0;
   async function render() {
     syncUrl();
+    if (state.moreLabel) state.moreLabel();
     // the Other tools work on a whole day: only the date applies
     const tool = el.line.value.startsWith("k:");
     for (const e of [el.dir, el.from, el.to, el.sfrom, el.sto, el.pass, el.plat, el.nonrev, el.run, el.diag]) e.disabled = tool;
+    $("more").hidden = tool;   // nothing behind it applies
     // a through line names its directions by where trains go (config.js `through`)
     const thr = el.line.value.startsWith("l:") && C.through && C.through[el.line.value.slice(2)];
     el.dir.options[0].text = thr ? thr.labels[0] : "Down";
@@ -1454,6 +1456,20 @@
     el.updated.textContent = `Timetable as at ${dmy(built)} for period ${ymd(state.index.first)} - ${ymd(state.index.last)}`;
     for (const e of [el.line, el.dir]) e.addEventListener("change", () => { el.sfrom.value = ""; el.sto.value = ""; el.sfrom.innerHTML = ""; el.sto.innerHTML = ""; render(); });
     for (const e of [el.date, el.from, el.to, el.sfrom, el.sto, el.pass, el.plat, el.nonrev, el.run, el.diag]) e.addEventListener("change", render);
+    // phones: the rest of the options open from "More options", which says
+    // how many are set
+    const more = $("more"), tools = more.closest(".tools");
+    more.addEventListener("click", () => {
+      tools.classList.toggle("open");
+      more.setAttribute("aria-expanded", tools.classList.contains("open"));
+    });
+    state.moreLabel = () => {
+      const set = [el.from.value !== "0", el.to.value !== "28", el.sfrom.selectedIndex > 0,
+                   el.sto.selectedIndex >= 0 && el.sto.selectedIndex < el.sto.options.length - 1,
+                   el.pass.checked, el.plat.checked, el.nonrev.checked, !!el.run.value.trim(), el.diag.checked].filter(Boolean).length;
+      more.textContent = set ? `More options (${set} set)` : "More options";
+    };
+    state.moreLabel();
     // highlight the column under the pointer, as rows are in CSS
     let hovered = -1;
     const mark = (i) => {
