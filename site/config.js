@@ -22,12 +22,6 @@ window.TT_CONFIG = {
   // they run. Line codes as in the GTFS.
   //   stations: only these stations (a list), or
   //   exclude:  every station but these
-  //   interchange: {feeders, stations, at, minutes}: the feeder lines' trains
-  //             get rows of their own at `stations`, so the corridor reads one
-  //             way (Dungog - Hamilton, change, Hamilton - Sydney), and a
-  //             "Change at" row pairs each feeder train with the first main-line
-  //             train it meets at `at`, allowing `minutes` (default 2) to change
-  //             and waiting at most `maxMinutes` (default 30)
   //   dropVia:  leave out trains that run through one of these stations
   //             between two that are shown (CCN via the North Shore in the
   //             Northern corridor). Otherwise a train that leaves the corridor
@@ -41,10 +35,35 @@ window.TT_CONFIG = {
     { id: "western", name: "Western & Blue Mountains", lines: ["T1", "T5", "BMT", "WST"],
       exclude: [...NORTH_SHORE, ...HORNSBY_BEROWRA, ...T5_SOUTH] },
     { id: "newcastle", name: "Central Coast & Hunter", lines: ["CCN", "HUN", "NRC", "NRW"],
-      exclude: [...NORTH_SHORE, ...MAIN_WEST], dropVia: ["Chatswood"],
-      interchange: { feeders: ["HUN"], stations: ["Hamilton", "Newcastle Interchange"], at: "Hamilton" } },
-    { id: "innerwest", name: "Inner West", lines: ["T2", "T3"] },
-    { id: "south", name: "East Hills & Southern Highlands", lines: ["T8", "SHL", "STH"],
-      interchange: { feeders: ["SHL"], stations: ["Campbelltown", "Macarthur"], at: "Campbelltown" } },
+      exclude: [...NORTH_SHORE, ...MAIN_WEST], dropVia: ["Chatswood"] },
+    { id: "innerwest", name: "Inner West & Bankstown", lines: ["T2", "T3", "T6", "T7"] },
+    { id: "south", name: "East Hills & Southern Highlands", lines: ["T8", "SHL", "STH"] },
+  ],
+
+  // Timed changes, shown as a "Change at" row wherever every one of `lines`
+  // (if given) is in the timetable, a line on its own or a corridor, and
+  // there's a train to change between. Each pairs a
+  // secondary train with the first primary train it meets, allowing `minutes`
+  // (default 2) to change and waiting at most `maxMinutes` (default 30).
+  //   split:   feeder trains get rows of their own at these stations, so the
+  //            timetable reads one way through the change (Dungog - Hamilton,
+  //            change, Hamilton - Sydney). Feeders are trains of `feeders`
+  //            lines, or trains running only on `side` stations, that start
+  //            or end at the interchange.
+  //   express: an express / all-stations change: the all-stations trains
+  //            call at some of these stations, the expresses at none; only
+  //            all-stations trains starting or ending at one of `locals`.
+  interchanges: [
+    { at: "Hamilton", lines: ["HUN", "CCN"], feeders: ["HUN"], split: ["Hamilton", "Newcastle Interchange"] },
+    { at: "Thirroul", lines: ["SCO"], locals: ["Thirroul", "Waterfall"],
+      express: ["Bulli", "Woonona", "Bellambi", "Corrimal", "Towradgi", "Fairy Meadow"] },
+    { at: "Kiama", lines: ["SCO"], split: ["Kiama"], side: ["Gerringong", "Berry", "Bomaderry (Nowra)"] },
+    { at: "Sutherland", lines: ["T4"], split: ["Sutherland"],
+      side: ["Kirrawee", "Gymea", "Miranda", "Caringbah", "Woolooware", "Cronulla"] },
+    { at: "Campbelltown", lines: ["SHL", "T8"], feeders: ["SHL"], split: ["Campbelltown", "Macarthur"] },
+    { at: "Moss Vale", lines: ["SHL"], split: ["Moss Vale"],
+      side: ["Exeter", "Bundanoon", "Penrose", "Wingello", "Tallong", "Marulan", "Goulburn"] },
+    { at: "Lithgow", lines: ["BMT"], split: ["Lithgow"], side: ["Rydal", "Tarana", "Bathurst"] },
+    { at: "Lidcombe", feeders: ["T6", "T7"], split: ["Lidcombe"] },
   ],
 };

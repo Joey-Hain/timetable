@@ -11,7 +11,7 @@ interleaved in the order they run.
   `data` branch.
 - `site/` is the static page (Cloudflare Pages, output dir `site`), reading
   the data from `raw.githubusercontent.com`.
-- Corridors are listed in `site/config.js`.
+- Corridors and timed changes (interchanges) are listed in `site/config.js`.
 
 The GTFS is a rolling window about 30 days ahead, so a new timetable shows up
 here once Transport for NSW loads it into the feed. `Probe feeds` (Actions)

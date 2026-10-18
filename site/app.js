@@ -99,11 +99,11 @@
   // A trip's stops keyed by station and visit number (City Circle trains pass
   // Central twice), with the time shown: departure, or arrival at the end.
   // Feeder trains at an interchange (HUN at Hamilton) get rows of their own
-  // there ("~f"), so the corridor reads one way: Dungog - Hamilton, change,
+  // there ("~<n>"), so the corridor reads one way: Dungog - Hamilton, change,
   // Hamilton - Sydney.
   function keyed(trip) {
     const seen = new Map();
-    const split = trip.split || new Set();
+    const split = trip.split || new Map();
     return trip.s.map(([st, arr, dwell = 0, plat = "", flag = ""], i) => {
       const n = (seen.get(st) || 0) + 1;
       seen.set(st, n);
@@ -111,7 +111,7 @@
       // picking up only at the start / setting down only at the end goes without saying
       if ((i === 0 && flag === "u") || (last && flag === "d")) flag = "";
       const base = `${st}#${n}`;
-      return { key: split.has(st) ? base + "~f" : base, base, st, arr, dep: arr + dwell,
+      return { key: base + (split.get(st) || ""), base, st, arr, dep: arr + dwell,
                t: last || flag === "p" ? arr : arr + dwell, plat, flag, last };
     });
   }
@@ -202,7 +202,7 @@
   // Central) is Up.
   function orient(trips) {
     if (!trips.length) return;
-    const ids = (t) => t.s.map(([st]) => [t.split && t.split.has(st) ? "f" + st : st]);
+    const ids = (t) => t.s.map(([st]) => [t.split && t.split.has(st) ? st + t.split.get(st) : st]);
     const rank = new Map();
     const seed = trips.reduce((a, b) => (b.s.length > a.s.length ? b : a));
     ids(seed).forEach(([st], i) => { if (!rank.has(st)) rank.set(st, i); });
@@ -271,41 +271,69 @@
     trips.sort((a, b) => a.ref - b.ref || a.line.localeCompare(b.line));
   }
 
-  // Timed connections at a corridor's interchange: each feeder train (HUN)
-  // with the first main-line train it meets there, allowing ix.minutes
-  // (default 2) to change and waiting at most ix.maxMinutes (default 30). Only feeders that start or end at the interchange
-  // count, not trains running through. Returns where the "Change" row goes
-  // and what each column shows, or null.
-  function connections(trips, rows, ix, at) {
-    const fk = `${at}#1~f`, mk = `${at}#1`;
-    const fi = rows.indexOf(fk), mi = rows.indexOf(mk);
-    if (fi < 0 || mi < 0) return null;
-    const feederFirst = fi < mi;   // feeders arrive, then main-line trains leave
-    const gap = (ix.minutes ?? 2) * 60;
-    const cells = new Map();
-    const pairs = new Map();
+  // Timed connections (config.js `interchanges`). The secondary trains are
+  // the feeders (split interchanges: HUN at Hamilton, the Bomaderry shuttle at
+  // Kiama) or the all-stations trains (express interchanges: SCO locals at
+  // Thirroul); the primary trains are the rest calling there. When the
+  // secondary arrives first, each gets the first primary leaving after it;
+  // when it leaves after, each gets the last primary arriving before it. At
+  // least ix.minutes (default 2) to change, at most ix.maxMinutes (default 30).
+  // Returns the "Change at" row: where it goes, each column's text, and the
+  // secondary -> primary pairs; or null if the interchange isn't in view.
+  function connections(trips, rows, ix, n, at) {
+    const mk = `${at}#1`;
+    const sk = ix.split ? `${mk}~${n}` : mk;
+    const mi = rows.indexOf(mk), si = rows.indexOf(sk);
+    if (mi < 0 || si < 0) return null;
+    let secondaryFirst, isSecondary, after;
+    if (ix.split) {
+      secondaryFirst = si < mi;
+      isSecondary = (t) => t.byKey.has(sk);
+      const own = rows.map((k, i) => (k.endsWith(`~${n}`) ? i : -1)).filter((i) => i >= 0);
+      after = secondaryFirst ? Math.max(...own) : Math.min(...own) - 1;
+    } else {
+      // all-stations trains call at some of ix.express, the expresses at none
+      const skip = new Set(ix.express.map((name) => state.byName.get(name)));
+      const skipRows = rows.map((k, i) => (skip.has(Number(k.split("#")[0])) ? i : -1)).filter((i) => i >= 0);
+      if (!skipRows.length) return null;
+      secondaryFirst = skipRows[0] < mi;   // the locals have been calling before the change
+      // locals that start (or, going the other way, end) at one of ix.locals:
+      // an all-stations train through from Sydney isn't part of the change
+      const ends = new Set((ix.locals || [ix.at]).map((name) => state.byName.get(name)));
+      isSecondary = (t) => t.stops.some((x) => skip.has(x.st) && x.flag !== "p") &&
+        ends.has((secondaryFirst ? t.stops[t.stops.length - 1] : t.stops[0]).st);
+      after = mi;
+    }
+    const gap = (ix.minutes ?? 2) * 60, most = (ix.maxMinutes ?? 30) * 60;
+    const calls = (t, k) => { const x = t.byKey.get(k); return x && x.flag !== "p" ? x : null; };
+    const prim = trips.filter((t) => !isSecondary(t) && calls(t, mk));
+    const cells = new Map(), pairs = new Map();
     const add = (t, html) => cells.set(t, (cells.get(t) ? cells.get(t) + "<br>" : "") + html);
-    const mains = trips.filter((t) => !t.split && t.byKey.get(mk) && t.byKey.get(mk).flag !== "p");
-    for (const f of trips) {
-      const s = f.split && f.byKey.get(fk);
-      if (!s || s.flag === "p" || !(feederFirst ? f.stops.slice(-2).some((x) => x.key.endsWith("~f"))
-                                                 : f.stops.slice(0, 2).some((x) => x.key.endsWith("~f")))) continue;
+    for (const t of trips) {
+      const s = isSecondary(t) && calls(t, sk);
+      if (!s) continue;
+      // a feeder has to start or end here; one running through is a main-line train
+      if (ix.split && !(secondaryFirst ? t.stops[t.stops.length - 1].key === sk || t.stops.slice(-2).some((x) => x.key === sk)
+                                       : t.stops[0].key === sk || t.stops.slice(0, 2).some((x) => x.key === sk))) continue;
       let best = null;
-      for (const m of mains) {
-        const ms = m.byKey.get(mk);
-        const wait = feederFirst ? ms.dep - s.arr : s.dep - ms.arr;
-        if (wait >= gap && wait <= (ix.maxMinutes ?? 30) * 60 && (!best || wait < best.wait)) best = { m, wait };
+      for (const m of prim) {
+        const ms = calls(m, mk);
+        const wait = secondaryFirst ? ms.dep - s.arr : s.dep - ms.arr;
+        if (wait >= gap && wait <= most && (!best || wait < best.wait)) best = { m, wait };
       }
       if (!best) continue;
-      const mins = Math.round(best.wait / 60);
-      pairs.set(f, best.m);
-      add(f, `${feederFirst ? "→" : "←"} ${esc(best.m.r)}<br><span class="work">${mins} min</span>`);
-      add(best.m, `${feederFirst ? "←" : "→"} ${esc(f.r)}`);
+      pairs.set(t, best.m);
+      // each side names the other train and when it's there:
+      //   arriving train: "to N418 / dep 06:42 · 5 min"
+      //   leaving train:  "from V710 / arr 06:38"
+      const ms = calls(best.m, mk);
+      const wait = `<span class="work"> · ${Math.round(best.wait / 60)} min</span>`;
+      const [inT, inS, outT, outS] = secondaryFirst ? [t, s, best.m, ms] : [best.m, ms, t, s];
+      add(inT, `to <b>${esc(outT.r)}</b><br><span class="work">dep ${hhmm(outS.dep)}</span>${wait}`);
+      add(outT, `from <b>${esc(inT.r)}</b><br><span class="work">arr ${hhmm(inS.arr)}</span>`);
     }
-    // the row goes between the feeders' rows and the main line's
-    const fRows = rows.map((k, i) => (k.endsWith("~f") ? i : -1)).filter((i) => i >= 0);
-    const after = feederFirst ? Math.max(...fRows) : Math.min(...fRows) - 1;
-    return { after, cells, pairs, feederFirst, label: `Change at ${state.stations[at][0]}` };
+    if (!pairs.size) return null;
+    return { after, cells, pairs, secondaryFirst, label: `Change at ${state.stations[at][0]}` };
   }
 
   function cell(s, opts) {
@@ -349,9 +377,10 @@
       const st = Number(key.split("#")[0]);
       const gap = i && !next.has(master[i - 1] + ">" + key) ? ' class="gap"' : "";
       h += `<tr${gap}><th class="stn">${esc(names[st][0])}</th>` + trips.map((t) => cell(t.byKey.get(key), opts)).join("") + "</tr>";
-      if (opts.change && opts.change.after === i) {
-        h += `<tr class="change"><th class="stn">${esc(opts.change.label)}</th>` +
-          trips.map((t) => `<td>${opts.change.cells.get(t) || ""}</td>`).join("") + "</tr>";
+      for (const c of opts.changes || []) {
+        if (c.after !== i) continue;
+        h += `<tr class="change"><th class="stn">${esc(c.label)}</th>` +
+          trips.map((t) => `<td>${c.cells.get(t) || ""}</td>`).join("") + "</tr>";
       }
     });
     h += '</tbody><tfoot><tr><th class="stn">Forms</th>' + trips.map((t) =>
@@ -389,19 +418,32 @@
     if (id !== renderId) return;
 
     const corridor = el.line.value.startsWith("c:") ? C.corridors.find((c) => "c:" + c.id === el.line.value) : null;
-    const byName = new Map(state.stations.map(([n], i) => [n, i]));
-    const ix = corridor && corridor.interchange;
-    const splitIds = ix ? new Set(ix.stations.map((n) => byName.get(n))) : null;
+    const byName = state.byName;
+    // interchanges in view: every line they need is shown
+    const active = (C.interchanges || []).map((ix, n) => ({ ix, n, at: byName.get(ix.at) }))
+      .filter(({ ix, at }) => at !== undefined && (ix.lines || []).every((l) => codes.includes(l) && !missing.includes(l)));
+    const splits = active.filter(({ ix }) => ix.split).map(({ ix, n }) => ({
+      ix, suffix: `~${n}`,
+      ids: new Set(ix.split.map((name) => byName.get(name))),
+      side: ix.side ? new Set(ix.side.map((name) => byName.get(name))) : null,
+    }));
     const all = [];
     for (const [line, f] of files) {
       for (const t of f.trips) {
         const s = corridor ? clip(t.s, corridor) : t.s;
         if (!s) continue;
         const trip = { ...t, s, line };
-        // only trains starting or ending at the interchange are feeders; one
-        // running through (an SHL from Central) is part of the main line
-        if (ix && ix.feeders.includes(line) && (splitIds.has(s[0][0]) || splitIds.has(s[s.length - 1][0]))) {
-          trip.split = splitIds;
+        // feeders: trains of the feeder lines, or running only on the far
+        // side, that start or end at the interchange (one running through is
+        // a main-line train)
+        for (const sp of splits) {
+          const ends = sp.ids.has(s[0][0]) || sp.ids.has(s[s.length - 1][0]);
+          const feeder = sp.ix.feeders ? sp.ix.feeders.includes(line)
+            : s.every(([st, , , , flag]) => flag === "p" || sp.ids.has(st) || sp.side.has(st));
+          if (ends && feeder) {
+            trip.split = trip.split || new Map();
+            for (const id of sp.ids) trip.split.set(id, sp.suffix);
+          }
         }
         all.push(trip);
       }
@@ -444,12 +486,15 @@
       const first = used.map((k) => t.byKey.get(k)).find((s) => s && s.flag !== "p");
       return first ? first.t : null;
     };
-    // a feeder that takes passengers on from the main line (HUN in the Down
-    // direction) goes with the train it connects from
-    const pre = ix ? connections(trips, used, ix, byName.get(ix.at)) : null;
+    // a secondary train that takes passengers on from a primary one (HUN in
+    // the Down direction) goes with the train it connects from
+    const follow = new Map();
+    for (const { ix, n, at } of active) {
+      const c = connections(trips, used, ix, n, at);
+      if (c && !c.secondaryFirst) for (const [t, m] of c.pairs) if (!follow.has(t)) follow.set(t, m);
+    }
     const inRange = trips.filter((t) => {
-      const m = pre && !pre.feederFirst && pre.pairs.get(t);
-      const ft = firstTime(m || t);
+      const ft = firstTime(follow.get(t) || t);
       return ft !== null && firstTime(t) !== null && ft >= lo && ft < hi;
     });
     used = used.filter((k) => inRange.some((t) => {
@@ -459,22 +504,23 @@
     notes.unshift(`${inRange.length} trains${inRange.length !== trips.length ? ` of ${trips.length}` : ""}, ${used.length} stations.`);
     el.note.textContent = notes.join(" ");
     el.note.hidden = false;
-    const change = ix ? connections(trips, used, ix, byName.get(ix.at)) : null;
+    const changes = active.map(({ ix, n, at }) => connections(trips, used, ix, n, at)).filter(Boolean);
+    // each secondary train sits next to the one it connects with: before it
+    // when it brings passengers in, after it when it takes them on
     let cols = inRange;
-    if (change) {
-      // each feeder sits next to the train it connects with: before it when
-      // it brings passengers in (Up), after it when it takes them on (Down)
-      const shown = new Set(inRange);
-      const moved = new Set([...change.pairs].filter(([f, m]) => shown.has(f) && shown.has(m)).map(([f]) => f));
-      cols = [];
-      for (const t of inRange) {
+    for (const c of changes) {
+      const shown = new Set(cols);
+      const moved = new Set([...c.pairs].filter(([f, m]) => shown.has(f) && shown.has(m) && f !== m).map(([f]) => f));
+      const next = [];
+      for (const t of cols) {
         if (moved.has(t)) continue;
-        const feeders = [...change.pairs].filter(([f, m]) => m === t && moved.has(f)).map(([f]) => f);
-        if (change.feederFirst) cols.push(...feeders, t); else cols.push(t, ...feeders);
+        const sec = [...c.pairs].filter(([f, m]) => m === t && moved.has(f)).map(([f]) => f);
+        if (c.secondaryFirst) next.push(...sec, t); else next.push(t, ...sec);
       }
+      cols = next;
     }
     el.table.innerHTML = inRange.length
-      ? table(cols, used, { pass: el.pass.checked, plat: el.plat.checked, change }, trips)
+      ? table(cols, used, { pass: el.pass.checked, plat: el.plat.checked, changes }, trips)
       : '<div class="empty">No trains in that range.</div>';
   }
 
@@ -485,6 +531,7 @@
       el.table.innerHTML = `<div class="empty">Couldn't load the timetable data (${esc(e.message)}).</div>`;
       return;
     }
+    state.byName = new Map(state.stations.map(([n], i) => [n, i]));
     fillOptions();
     const built = new Date(state.index.built);
     el.updated.textContent = ` · timetable downloaded ${built.toLocaleString("en-AU", { timeZone: "Australia/Sydney", dateStyle: "medium", timeStyle: "short", hour12: false })}, covers ${state.index.first} to ${state.index.last}`;
