@@ -623,14 +623,13 @@
     el.table.innerHTML = html;
   }
 
-  // Every train of one non-revenue kind that day (Freight & inspection:
-  // track machines, inspection trains and light engines), each on its own,
-  // whole journeys, both ways
+  // Freight & inspection: every track machine, light engine and test train
+  // that day, by what it is (inspection runs, freight and light engines, new
+  // fleet test runs), each train on its own, whole journeys, both ways
   async function renderKind(kind, day, id) {
     const X = state.index.lines.X;
     state.arrows = null;
-    el.note.textContent = "Freight trains often run off path or on generic paths that aren't in the published GTFS, so most of them won't be here.";
-    el.note.hidden = false;
+    el.note.hidden = true;
     if (!X || !X.dates[day]) { el.table.innerHTML = `<div class="empty">None on ${esc(day)}.</div>`; return; }
     el.table.innerHTML = '<div class="empty">Loading…</div>';
     let f;
@@ -641,14 +640,26 @@
     if (id !== renderId) return;
     const ts = f.trips.filter((t) => t.c === kind).map((t) => ({ ...t, line: "X", e: 1, dir: t.d }))
       .sort((a, b) => a.s[0][1] - b.s[0][1]);
-    if (!ts.length) { el.table.innerHTML = `<div class="empty">None on ${esc(day)}.</div>`; return; }
+    // by stock: I inspection cars, R the new regional fleet on test, the
+    // rest locomotives
+    const sections = [
+      ["Inspection", (t) => /^I/.test(t.v), ""],
+      ["Freight and light engines", (t) => !/^[IR]/.test(t.v),
+       "Freight trains often run off path or on generic paths that aren't in the published GTFS, so most of them won't be here."],
+      ["Test runs", (t) => /^R/.test(t.v), ""],
+    ];
+    const name = (x) => state.stations[x[0]][0];
     let html = "";
-    for (const t of ts) {
-      t.stops = keyed(t);
-      t.byKey = new Map(t.stops.map((x) => [x.key, x]));
-      const name = (x) => state.stations[x[0]][0];
-      html += `<h2 class="run-head">${esc(t.r)}, ${esc(name(t.s[0]))} to ${esc(name(t.s[t.s.length - 1]))}</h2>` +
-        table([t], t.stops.map((x) => x.key), { pass: true, plat: el.plat.checked, changes: [] }, [t]);
+    for (const [title, test, note] of sections) {
+      const these = ts.filter(test);
+      html += `<h2 class="kind-head">${esc(title)}</h2>` + (note ? `<p class="note">${esc(note)}</p>` : "");
+      if (!these.length) { html += '<p class="note">None this day.</p>'; continue; }
+      for (const t of these) {
+        t.stops = keyed(t);
+        t.byKey = new Map(t.stops.map((x) => [x.key, x]));
+        html += `<h3 class="run-head">${esc(t.r)}, ${esc(name(t.s[0]))} to ${esc(name(t.s[t.s.length - 1]))}</h3>` +
+          table([t], t.stops.map((x) => x.key), { pass: true, plat: el.plat.checked, changes: [] }, [t]);
+      }
     }
     el.table.innerHTML = html;
   }
