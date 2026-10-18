@@ -81,13 +81,20 @@ window.TT_CONFIG = {
   ],
 
   // Branch lines: listed straight after the junction (before it coming in)
-  // and indented, the main line carrying on after them.
+  // and indented, the main line carrying on after them. `views`: only in
+  // these timetables.
   branches: [
     { at: "Sutherland", stations: ["Kirrawee", "Gymea", "Miranda", "Caringbah", "Woolooware", "Cronulla"] },
     { at: "Coniston", stations: ["Lysaghts", "Cringila", "Port Kembla North", "Port Kembla"] },
     { at: "Blacktown", stations: ["Marayong", "Quakers Hill", "Schofields", "Riverstone", "Vineyard", "Mulgrave",
                                   "Windsor", "Clarendon", "East Richmond", "Richmond"] },
     { at: "Glenfield", stations: ["Edmondson Park", "Leppington"] },
+    { at: "Regents Park", stations: ["Birrong", "Yagoona", "Bankstown"] },
+    { at: "Lidcombe", stations: ["Olympic Park"] },
+    // the Eastern Suburbs Railway off Redfern, in the corridor only (T4 on its
+    // own runs Bondi Junction to Waterfall)
+    { at: "Redfern", stations: ["Bondi Junction", "Edgecliff", "Kings Cross", "Martin Place", "Town Hall", "Central ESR"],
+      views: ["c:illawarra"] },
     { at: "Maitland", stations: ["Telarah", "Mindaribba", "Paterson", "Martins Creek", "Hilldale", "Wallarobba",
                                  "Wirragulla", "Dungog"] },
   ],

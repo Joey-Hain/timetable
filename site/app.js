@@ -292,6 +292,7 @@
     const goes = new Set();
     for (const t of trips) t.stops.forEach((x, i) => { if (i) goes.add(t.stops[i - 1].key + ">" + x.key); });
     for (const br of C.branches || []) {
+      if (br.views && !br.views.includes(el.line.value)) continue;
       const j = `${state.byName.get(br.at)}#1`;
       const ids = new Set(br.stations.map((name) => state.byName.get(name)));
       const keys = master.filter((k) => ids.has(Number(k.split("#")[0])));
