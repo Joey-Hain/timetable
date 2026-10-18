@@ -184,6 +184,10 @@ def build(gtfs: Path, out: Path, today: date | None = None):
         for x in part:
             if x["stop_id"] not in stop_station:
                 continue
+            if stations[stop_station[x["stop_id"]]][0].endswith(" Bus") and x["pickup_type"] == "1" and x["drop_off_type"] == "1":
+                # Sydney Trains times trains past closed stations (Wallerawang,
+                # Raglan, Thirlmere...) using the coach stops that replaced them
+                continue
             up, down = x["pickup_type"] != "1", x["drop_off_type"] != "1"
             flag = "" if up and down else "d" if down else "u" if up else "p"
             arr, dep = secs(x["arrival_time"] or x["departure_time"]), secs(x["departure_time"] or x["arrival_time"])
