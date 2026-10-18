@@ -11,6 +11,7 @@ Writes
 
 A line file is {"trips": [trip, ...]} with each trip
   {"r": run number, "d": "up"|"down", "h": headsign, "v": set type (e.g. "B8"),
+   "b": formed by, "f": forms (each [run, 1 if it carries passengers else 0]),
    "s": [[station, arr, dwell, platform, flag], ...]}
 arr in seconds after midnight of the service day (can pass 24:00), dwell in
 seconds (dep = arr + dwell); trailing 0 / "" values are left off; flag
@@ -77,6 +78,44 @@ def service_dates(z) -> dict[str, set[date]]:
         (out[c["service_id"]].add if c["exception_type"] == "1" else out[c["service_id"]].discard)(d)
     return out
 
+LETTERS = "ABCDEFGHJKLMNPRSTUVWXYZ"   # run suffixes skip I, O and Q
+
+
+def link_workings(workings, span) -> dict:
+    """{(trip, day): (formed-by, forms)} with each as [run, carries passengers 0/1].
+    A train's day is a GTFS block; trips without one are linked to the same
+    run number with the next suffix letter (322C forms 322D), the usual
+    pattern for suburban runs."""
+    by_block = defaultdict(list)
+    by_run = defaultdict(list)
+    for tid, (run, block, days) in workings.items():
+        if tid not in span:
+            continue
+        for d in days:
+            if block:
+                by_block[(block, d)].append(tid)
+            else:
+                by_run[(run[:-1], d)].append(tid)
+    out = {}
+    def link(a, b, d):
+        pa, pb = out.get((a, d), [None, None]), out.get((b, d), [None, None])
+        pa[1] = [workings[b][0], int(span[b][2])]
+        pb[0] = [workings[a][0], int(span[a][2])]
+        out[(a, d)], out[(b, d)] = pa, pb
+    for (block, d), tids in by_block.items():
+        tids.sort(key=lambda t: span[t][0])
+        for a, b in zip(tids, tids[1:]):
+            link(a, b, d)
+    for (stem, d), tids in by_run.items():
+        by_suffix = {workings[t][0][-1]: t for t in tids}
+        for t in tids:
+            suffix = workings[t][0][-1]
+            if suffix in LETTERS and LETTERS.index(suffix) + 1 < len(LETTERS):
+                n = by_suffix.get(LETTERS[LETTERS.index(suffix) + 1])
+                if n and span[n][0] >= span[t][1] and out.get((t, d), [None, None])[1] is None:
+                    link(t, n, d)
+    return {k: tuple(v) for k, v in out.items()}
+
 
 def build(gtfs: Path, out: Path, today: date | None = None):
     z = zipfile.ZipFile(gtfs)
@@ -101,14 +140,16 @@ def build(gtfs: Path, out: Path, today: date | None = None):
 
     lines: dict[str, dict] = {}
     trip_meta = {}
+    workings = {}  # every trip, empty ones too, for "formed by" / "forms": tid -> (run, block, days)
     for t in rows(z, "trips.txt"):
         r = routes.get(t["route_id"])
         line = (r or {}).get("route_short_name", "").strip()
-        if not line:
-            continue  # non-revenue and out-of-service routes
         days = {d for d in dates_of.get(t["service_id"], ()) if d >= today}
         if not days:
             continue
+        workings[t["trip_id"]] = (t["trip_id"].split(".")[0], (t.get("block_id") or "").strip(), days)
+        if not line:
+            continue  # non-revenue and out-of-service routes
         lines.setdefault(line, {"name": r.get("route_desc") or r.get("route_long_name") or line,
                                 "colour": "#" + (r.get("route_color") or "888888"),
                                 "network": "regional" if line in REGIONAL else
@@ -116,9 +157,19 @@ def build(gtfs: Path, out: Path, today: date | None = None):
         trip_meta[t["trip_id"]] = (line, t, days)
 
     stop_times = defaultdict(list)
+    span = {}  # tid -> [first time, last time, carries passengers]
     for st in rows(z, "stop_times.txt"):
-        if st["trip_id"] in trip_meta:
-            stop_times[st["trip_id"]].append(st)
+        tid = st["trip_id"]
+        if tid in trip_meta:
+            stop_times[tid].append(st)
+        if tid in workings:
+            a, d = st["arrival_time"] or st["departure_time"], st["departure_time"] or st["arrival_time"]
+            if not a:
+                continue
+            e = span.setdefault(tid, [secs(d), secs(a), False])
+            e[0], e[1] = min(e[0], secs(d)), max(e[1], secs(a))
+            e[2] = e[2] or st["pickup_type"] != "1"
+    links = link_workings(workings, span)
 
     by_line_day: dict[tuple[str, date], list] = defaultdict(list)
     for tid, (line, t, days) in trip_meta.items():
@@ -150,7 +201,13 @@ def build(gtfs: Path, out: Path, today: date | None = None):
         trip = {"r": tid.split(".")[0], "d": "up" if up else "down", "h": headsign,
                 "v": t.get("vehicle_category_id", ""), "s": stops}
         for d in days:
-            by_line_day[(line, d)].append(trip)
+            prev, nxt = links.get((tid, d), (None, None))
+            day_trip = dict(trip)
+            if prev:
+                day_trip["b"] = prev   # formed by: [run, carries passengers]
+            if nxt:
+                day_trip["f"] = nxt    # forms
+            by_line_day[(line, d)].append(day_trip)
 
     # one file per distinct service day of each line
     (out / "lines").mkdir(parents=True, exist_ok=True)
