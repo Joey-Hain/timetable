@@ -12,7 +12,9 @@ Writes
 A line file is {"trips": [trip, ...]} with each trip
   {"r": run number, "d": "up"|"down", "h": headsign, "v": set type (e.g. "B8"),
    "b": formed by, "f": forms (each [run, 1 if it carries passengers else 0]),
-   "s": [[station, arr, dwell, platform, flag], ...]}
+   "s": [[station, arr, dwell, platform, flag], ...],
+   "o" / "t": where a regional train cut to Sydney Trains' area really starts /
+   ends, by name}
 arr in seconds after midnight of the service day (can pass 24:00), dwell in
 seconds (dep = arr + dwell); trailing 0 / "" values are left off; flag
 "" = stops, "p" = passes, "d" = sets down only, "u" = picks up only. Only the
@@ -235,7 +237,13 @@ def build(gtfs: Path, out: Path, today: date | None = None):
                 else:
                     cur = None
             if best and best[1] > best[0]:
-                kept.append({**t, "s": t["s"][best[0]:best[1] + 1]})
+                cut = {**t, "s": t["s"][best[0]:best[1] + 1]}
+                # where it really comes from / goes on to, past the cut
+                if best[0] > 0:
+                    cut["o"] = stations[t["s"][0][0]][0]
+                if best[1] < len(t["s"]) - 1:
+                    cut["t"] = stations[t["s"][-1][0]][0]
+                kept.append(cut)
         trips[:] = kept
 
     # one file per distinct service day of each line

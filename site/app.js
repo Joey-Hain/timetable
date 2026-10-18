@@ -429,8 +429,11 @@
           trips.map((t) => `<td>${c.cells.get(t) || ""}</td>`).join("") + "</tr>";
       }
     });
+    // a regional train cut to this area says where it goes on to or came from
+    const beyond = (t) => [t.t && `continues to ${esc(t.t)}`, t.o && `arrives from ${esc(t.o)}`]
+      .filter(Boolean).map((x) => `<span class="work">${x}</span>`).join("<br>");
     h += '</tbody><tfoot><tr><th class="stn">Forms</th>' + trips.map((t) =>
-      `<td>${working(t.f)}</td>`).join("") + "</tr></tfoot>";
+      `<td>${[working(t.f), beyond(t)].filter(Boolean).join("<br>")}</td>`).join("") + "</tr></tfoot>";
     return h + "</table></div>";
   }
 
@@ -548,9 +551,8 @@
       const s = t.byKey.get(k);
       return s && (s.flag !== "p" || el.pass.checked);
     }));
-    notes.unshift(`${inRange.length} trains${inRange.length !== trips.length ? ` of ${trips.length}` : ""}, ${used.length} stations.`);
     el.note.textContent = notes.join(" ");
-    el.note.hidden = false;
+    el.note.hidden = !notes.length;
     const changes = active.map(({ ix, n, at }) => connections(trips, used, ix, n, at)).filter(Boolean);
     // each secondary train sits next to the one it connects with: before it
     // when it brings passengers in, after it when it takes them on
@@ -581,7 +583,10 @@
     state.byName = new Map(state.stations.map(([n], i) => [n, i]));
     fillOptions();
     const built = new Date(state.index.built);
-    el.updated.textContent = ` · timetable downloaded ${built.toLocaleString("en-AU", { timeZone: "Australia/Sydney", dateStyle: "medium", timeStyle: "short", hour12: false })}, covers ${state.index.first} to ${state.index.last}`;
+    // dd/mm/yy
+    const dmy = (d) => d.toLocaleDateString("en-AU", { timeZone: "Australia/Sydney", day: "2-digit", month: "2-digit", year: "2-digit" });
+    const ymd = (s) => dmy(new Date(`${s}T12:00:00+10:00`));
+    el.updated.textContent = `Timetable as at ${dmy(built)} for period ${ymd(state.index.first)} - ${ymd(state.index.last)}`;
     for (const e of [el.line, el.dir]) e.addEventListener("change", () => { el.sfrom.value = ""; el.sto.value = ""; el.sfrom.innerHTML = ""; el.sto.innerHTML = ""; render(); });
     for (const e of [el.date, el.from, el.to, el.sfrom, el.sto, el.pass, el.plat]) e.addEventListener("change", render);
     render();
