@@ -128,7 +128,8 @@
       if ((i === 0 && flag === "u") || (last && flag === "d")) flag = "";
       const base = `${st}#${n}`;
       return { key: base + (split.get(st) || ""), base, st, arr, dep: arr + dwell,
-               t: last || flag === "p" ? arr : arr + dwell, plat, flag, last, first: i === 0, join: !!stop.isJoin };
+               t: last || flag === "p" ? arr : arr + dwell, plat, flag, last, first: i === 0, join: !!stop.isJoin,
+               rbRun: stop.rbRun, rbLine: stop.rbLine, rbThen: stop.rbThen, kind: stop.kind };
     });
   }
 
@@ -620,7 +621,9 @@
     const attr = ` title="${esc(title.join(", "))}"`;
     // empty runs and MTPV: every timing point; specials and charters as
     // trains, greyed
-    if (t && t.e && (s.flag !== "p" || t.c === "ecs" || t.c === "mtpv")) {
+    // (in a chain of runs each stop knows its own run's kind)
+    const kind = s.kind !== undefined ? s.kind : t && t.e ? t.c : null;
+    if (kind && (s.flag !== "p" || kind === "ecs" || kind === "mtpv")) {
       return `<td class="ecs"${attr}>${shown}${s.flag && s.flag !== "p" ? `<span class="flag">${s.flag}</span>` : ""}</td>`;
     }
     if (s.flag === "p") {
@@ -677,13 +680,20 @@
         h += row(`${key}|dep`, "dep", "");
       }
       // through trains change run number here (T1 at Central Electric)
-      if (trips.some((t) => t.rb && t.byKey.has(key) && t.byKey.get(key).join)) {
+      if (trips.some((t) => t.byKey.has(key) && t.byKey.get(key).join && (t.rb || t.byKey.get(key).rbRun))) {
         // a change of line shows the new line's code (T9 on as T1); a lap of
         // the City Circle shows CC
         const badge = (t) => t.rbLoop ? '<span class="line cc">CC</span>'
           : t.rbLine && t.rbLine !== t.line ? `<span class="line" style="background:${esc(lines[t.rbLine].colour)}">${esc(t.rbLine)}</span>` : "";
-        h += '<tr class="change"><th class="stn">Continues as</th>' + trips.map((t) =>
-          `<td>${t.rb && t.byKey.has(key) && t.byKey.get(key).join ? `${badge(t)}<b>${esc(t.rb)}</b>` : ""}</td>`).join("") + "</tr>";
+        // a chain of runs (run search) carries its next run on the stop
+        const cellOf = (t) => {
+          const x = t.byKey.get(key);
+          if (!x || !x.join) return "";
+          if (x.rbRun) return `${x.rbLine && x.rbLine !== t.line ? `<span class="line" style="background:${esc(lines[x.rbLine].colour)}">${esc(x.rbLine)}</span>` : ""}<b>${esc(x.rbRun)}</b>`;
+          return t.rb ? `${badge(t)}<b>${esc(t.rb)}</b>` : "";
+        };
+        const then = trips.some((t) => t.byKey.has(key) && t.byKey.get(key).rbThen);
+        h += `<tr class="change"><th class="stn">${then ? "Then" : "Continues as"}</th>` + trips.map((t) => `<td>${cellOf(t)}</td>`).join("") + "</tr>";
       }
     });
     // a regional train cut to this area says where it goes on to or came from
@@ -697,53 +707,78 @@
 
   // One run on its own (the Run box): every line that day, non-revenue
   // included, through trains joined, its whole journey
-  // Runs on their own (the Run box): every line that day, non-revenue
-  // included, through trains joined, whole journeys. * stands for any
-  // characters: 200* is 200A, 200B...; *360 is N360, W360, C360...
+  // Runs one after another as one column, stop by stop: a set's day (the
+  // Run box), an inspection train's runs. Where one forms the next at the
+  // same place, "Continues as"; otherwise "Then".
+  function chainTrip(runs) {
+    const s = [];
+    runs.forEach((t, i) => {
+      const stops = t.s.map((x) => { const y = [...x]; y.kind = t.e ? t.c || "ecs" : ""; return y; });
+      if (i) {
+        const prev = runs[i - 1], last = s[s.length - 1], first = stops[0];
+        const linked = prev.f && prev.f[0] === t.r && last[0] === first[0];
+        if (linked) {
+          const join = [first[0], last[1], first[1] + (first[2] || 0) - last[1], first[3] || last[3] || "", ""];
+          join.isJoin = true; join.rbRun = t.r; join.rbLine = t.line; join.kind = first.kind;
+          s[s.length - 1] = join;
+          stops.shift();
+        } else {
+          first.isJoin = true; first.rbRun = t.r; first.rbLine = t.line; first.rbThen = true;
+          // the "Then" row goes after the last stop of the one before
+          s[s.length - 1].isJoin = true; s[s.length - 1].rbRun = t.r; s[s.length - 1].rbLine = t.line; s[s.length - 1].rbThen = true;
+          first.isJoin = false;
+        }
+      }
+      s.push(...stops);
+    });
+    const a = runs[0], z = runs[runs.length - 1];
+    // headed by the set and the line it runs on in service
+    const rev = runs.find((x) => !x.e);
+    const t = { ...a, s, h: z.h, f: z.f, t: z.t, o: a.o, round: true, dir: "down", e: rev ? 0 : 1, c: rev ? undefined : a.c,
+                line: rev ? rev.line : a.line };
+    t.stops = keyed(t);
+    t.byKey = new Map(t.stops.map((x) => [x.key, x]));
+    return t;
+  }
+  const chainTable = (t, title) => `<h2 class="run-head">${esc(title)}</h2>` +
+    table([t], t.stops.filter((x) => x.flag !== "p" || el.pass.checked || x.kind).map((x) => x.key),
+      { pass: el.pass.checked, plat: el.plat.checked, changes: [] }, [t]);
+
+  // The Run box: every line that day, non-revenue included. * stands for one
+  // character: 200* is 200A, 200B...; *360 is N360, W360...; 2*** every
+  // 2xx set. Each set (run number without its letter) is one table, its
+  // runs in order down the day, so the result reads as a fleet diagram.
   async function renderRun(run, day, id) {
     const codes = Object.keys(state.index.lines).filter((c) => state.index.lines[c].dates[day]);
-    const re = new RegExp("^" + run.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$", "i");
-    const hit = (x) => re.test(x.r) || (x.rb && re.test(x.rb));
+    const re = new RegExp("^" + run.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".") + "$", "i");
     el.table.innerHTML = '<div class="empty">Loading…</div>';
     state.arrows = null;
-    const groups = [];
+    let found = [];
     try {
       const files = await Promise.all(codes.map(async (c) => [c, await getJSON(`lines/${encodeURIComponent(c)}/${state.index.lines[c].dates[day]}.json`)]));
-      const partners = new Map();
-      for (const [c, f] of files) if ((C.throughLines || []).includes(c)) for (const t of f.trips) { if (!partners.has(t.r)) partners.set(t.r, []); partners.get(t.r).push({ ...t, line: c }); }
-      for (const [c, f] of files) {
-        let list = f.trips.map((t) => ({ ...t, line: c, e: c === "X" ? 1 : 0 }));
-        if ((C.throughLines || []).includes(c)) list = joinThrough(list, partners, { line: c, lineView: true });
-        const found = list.filter(hit);
-        if (found.length) groups.push([c, found]);
-      }
+      for (const [c, f] of files) for (const t of f.trips) if (re.test(t.r)) found.push({ ...t, line: c, e: c === "X" ? 1 : 0 });
     } catch (e) {
       if (id === renderId) el.table.innerHTML = `<div class="empty">Couldn't load the timetable (${esc(e.message)}).</div>`;
       return;
     }
     if (id !== renderId) return;
     el.note.hidden = true;
-    if (!groups.length) {
+    if (!found.length) {
       el.table.innerHTML = `<div class="empty">No run ${esc(run)} on ${esc(day)}.</div>`;
       return;
     }
-    // one table per line and direction
+    const stem = (r) => (/[A-Z]$/i.test(r) && /\d/.test(r) ? r.slice(0, -1) : r);
+    const sets = new Map();
+    for (const t of found) {
+      const k = stem(t.r);
+      if (!sets.has(k)) sets.set(k, []);
+      sets.get(k).push(t);
+    }
     let html = "";
-    for (const [c, found] of groups) {
-      orient(found);
-      for (const t of found) if (t.fixDir) t.dir = t.fixDir;
-      const thr = C.through && C.through[c];
-      for (const dir of ["down", "up"]) {
-        const ts = found.filter((t) => t.dir === dir);
-        if (!ts.length) continue;
-        for (const t of ts) { t.stops = keyed(t); t.byKey = new Map(t.stops.map((x) => [x.key, x])); }
-        sortTrips(ts);
-        const rows = stationOrder(ts).filter((k) => ts.some((t) => { const x = t.byKey.get(k); return x && (x.flag !== "p" || el.pass.checked || t.e); }));
-        const name = c === "X" ? "Non-revenue" : lineLabel(c);
-        const way = thr ? thr.labels[dir === "down" ? 0 : 1] : dir === "down" ? "Down" : "Up";
-        html += `<h2 class="run-head">${esc(name)}, ${esc(way)}</h2>` + table(ts, rows, { pass: el.pass.checked, plat: el.plat.checked, changes: [],
-          throughKey: `${state.byName.get(C.throughAt)}#1` }, ts);
-      }
+    for (const [k, runs] of [...sets].sort((x, y) => x[0].localeCompare(y[0], "en", { numeric: true }))) {
+      runs.sort((x, y) => x.s[0][1] - y.s[0][1]);
+      const title = runs.length > 1 ? `${k}: ${runs.map((t) => t.r).join(", ")}` : runs[0].r;
+      html += chainTable(chainTrip(runs), title);
     }
     el.table.innerHTML = html;
   }
@@ -779,11 +814,20 @@
       const these = ts.filter(test);
       html += `<h2 class="kind-head">${esc(title)}</h2>` + (note ? `<p class="note">${esc(note)}</p>` : "");
       if (!these.length) { html += '<p class="note">None this day.</p>'; continue; }
-      for (const t of these) {
-        t.stops = keyed(t);
-        t.byKey = new Map(t.stops.map((x) => [x.key, x]));
-        html += `<h3 class="run-head">${esc(t.r)}, ${esc(name(t.s[0]))} to ${esc(name(t.s[t.s.length - 1]))}</h3>` +
-          table([t], t.stops.map((x) => x.key), { pass: true, plat: el.plat.checked, changes: [] }, [t]);
+      // each train's runs one after another (HM44, HM46, HM47...), following
+      // what each forms
+      const byRun = new Map(these.map((t) => [t.r, t]));
+      const formed = new Set(these.filter((t) => t.f && byRun.has(t.f[0])).map((t) => t.f[0]));
+      for (const start of these.filter((t) => !formed.has(t.r))) {
+        const runs = [start];
+        while (runs.length < 50) {
+          const z = runs[runs.length - 1], nx = z.f && byRun.get(z.f[0]);
+          if (!nx || runs.includes(nx)) break;
+          runs.push(nx);
+        }
+        const a = runs[0], z = runs[runs.length - 1];
+        html += chainTable(chainTrip(runs), `${runs.map((t) => t.r).join(", ")}: ${name(a.s[0])} to ${name(z.s[z.s.length - 1])}`)
+          .replace('<h2 class="run-head">', '<h3 class="run-head">').replace("</h2>", "</h3>");
       }
     }
     el.table.innerHTML = html;
