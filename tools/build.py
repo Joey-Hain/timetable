@@ -45,9 +45,18 @@ SYDNEY = ZoneInfo("Australia/Sydney")
 CENTRAL = (-33.8832, 151.2065)
 DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 REGIONAL = {"NRC", "NRW", "STH", "WST"}   # NSW TrainLink long-distance trains
+# Central is three stations as Sydney Trains runs it: the terminal (platforms
+# 1-15), the suburban "electric" platforms (16-23) and the Eastern Suburbs
+# Railway underground (24-25)
+def central_part(platform: str) -> str:
+    n = int(platform) if platform.isdigit() else 0
+    return "Sydney Terminal" if 1 <= n <= 15 else "Central Electric" if 16 <= n <= 23 else \
+        "Central ESR" if n in (24, 25) else "Central"
+
+
 # regional trains name the big-city termini city first, as the UK does
 # ("London King's Cross"); Canberra is just Canberra
-CITY_NAMES = {"Central": "Sydney Central", "Southern Cross": "Melbourne Southern Cross",
+CITY_NAMES = {"Central": "Sydney Central", "Sydney Terminal": "Sydney Central", "Southern Cross": "Melbourne Southern Cross",
               "Brisbane": "Brisbane Roma Street"}
 
 
@@ -134,12 +143,14 @@ def build(gtfs: Path, out: Path, today: date | None = None):
     for sid, s in raw.items():
         parent = raw.get(s.get("parent_station") or "", s)
         name = re.sub(r"\s+Station$", "", parent["stop_name"].strip())
+        m = re.search(r"Platform\s+(\S+)", s["stop_name"])
+        stop_platform[sid] = (s.get("platform_code") or (m.group(1) if m else "")).strip()
+        if name == "Central":
+            name = central_part(stop_platform[sid])
         if name not in station_ix:
             station_ix[name] = len(stations)
             stations.append([name, round(float(parent["stop_lat"]), 5), round(float(parent["stop_lon"]), 5)])
         stop_station[sid] = station_ix[name]
-        m = re.search(r"Platform\s+(\S+)", s["stop_name"])
-        stop_platform[sid] = (s.get("platform_code") or (m.group(1) if m else "")).strip()
 
     routes = {r["route_id"]: r for r in rows(z, "routes.txt")}
     sets = {v["vehicle_category_id"]: v["vehicle_category_name"] for v in rows(z, "vehicle_categories.txt")}
@@ -147,6 +158,7 @@ def build(gtfs: Path, out: Path, today: date | None = None):
 
     lines: dict[str, dict] = {}
     trip_meta = {}
+    ecs_meta = {}
     workings = {}  # every trip, empty ones too, for "formed by" / "forms": tid -> (run, block, days)
     for t in rows(z, "trips.txt"):
         r = routes.get(t["route_id"])
@@ -156,7 +168,14 @@ def build(gtfs: Path, out: Path, today: date | None = None):
             continue
         workings[t["trip_id"]] = (t["trip_id"].split(".")[0], (t.get("block_id") or "").strip(), days)
         if not line:
-            continue  # non-revenue and out-of-service routes
+            # non-revenue and out-of-service moves: kept as empty trains if
+            # they're Sydney Trains / NSW TrainLink stock (not track machines,
+            # locomotives or heritage trains)
+            if t.get("vehicle_category_id") in sets:
+                ecs_meta[t["trip_id"]] = (t, days)
+            continue
+        if t.get("vehicle_category_id", "").startswith("Z") or (t.get("trip_headsign") or "").strip() == "Charter":
+            continue  # heritage, tourist (Indian Pacific) and charter trains: not in the public timetable
         lines.setdefault(line, {"name": r.get("route_desc") or r.get("route_long_name") or line,
                                 "colour": "#" + (r.get("route_color") or "888888"),
                                 "network": "regional" if line in REGIONAL else
@@ -167,7 +186,7 @@ def build(gtfs: Path, out: Path, today: date | None = None):
     span = {}  # tid -> [first time, last time, carries passengers]
     for st in rows(z, "stop_times.txt"):
         tid = st["trip_id"]
-        if tid in trip_meta:
+        if tid in trip_meta or tid in ecs_meta:
             stop_times[tid].append(st)
         if tid in workings:
             a, d = st["arrival_time"] or st["departure_time"], st["departure_time"] or st["arrival_time"]
@@ -222,10 +241,37 @@ def build(gtfs: Path, out: Path, today: date | None = None):
                 day_trip["f"] = nxt    # forms
             by_line_day[(line, d)].append(day_trip)
 
+    # empty trains, every timing point a "pass"; the site only shows them on
+    # request (?ecs=1), clipped to the stations in view
+    for tid, (t, days) in ecs_meta.items():
+        stops = []
+        for x in sorted(stop_times.get(tid, ()), key=lambda x: int(x["stop_sequence"])):
+            if x["stop_id"] not in stop_station or stations[stop_station[x["stop_id"]]][0].endswith(" Bus"):
+                continue
+            arr, dep = secs(x["arrival_time"] or x["departure_time"]), secs(x["departure_time"] or x["arrival_time"])
+            stop = [stop_station[x["stop_id"]], arr, dep - arr, stop_platform.get(x["stop_id"], ""), "p"]
+            stops.append(stop)
+        if len(stops) < 2:
+            continue
+        first, last = stations[stops[0][0]], stations[stops[-1][0]]
+        up = dist_km(last[1:], CENTRAL) < dist_km(first[1:], CENTRAL)
+        trip = {"r": tid.split(".")[0], "d": "up" if up else "down", "h": "Empty",
+                "v": t.get("vehicle_category_id", ""), "s": stops}
+        for d in days:
+            prev, nxt = links.get((tid, d), (None, None))
+            day_trip = dict(trip)
+            if prev:
+                day_trip["b"] = prev
+            if nxt:
+                day_trip["f"] = nxt
+            by_line_day[("ECS", d)].append(day_trip)
+    if ecs_meta:
+        lines["ECS"] = {"name": "Empty trains", "colour": "#888888", "network": "empty"}
+
     # The regional trains as Sydney Trains has them are only right inside its
     # own (suburban and intercity) area, so cut them to their longest stretch
     # of stations Sydney Trains' own trains run through
-    served = {s[0] for (line, d), trips in by_line_day.items() if line not in REGIONAL
+    served = {s[0] for (line, d), trips in by_line_day.items() if line not in REGIONAL and line != "ECS"
               for t in trips for s in t["s"]}
     for (line, d), trips in by_line_day.items():
         if line not in REGIONAL:

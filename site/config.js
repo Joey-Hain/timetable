@@ -31,7 +31,7 @@ window.TT_CONFIG = {
     { id: "northern", name: "Northern via Strathfield", lines: ["T9", "CCN", "NRC", "NRW"],
       exclude: [...NORTH_SHORE, ...MAIN_WEST, ...HUNTER], dropVia: ["Chatswood"] },
     { id: "northshore", name: "North Shore", lines: ["T1", "T9", "CCN"],
-      stations: ["Central", ...NORTH_SHORE, ...HORNSBY_BEROWRA] },
+      stations: ["Central Electric", "Sydney Terminal", ...NORTH_SHORE, ...HORNSBY_BEROWRA] },
     { id: "western", name: "Western & Blue Mountains", lines: ["T1", "T5", "BMT", "WST"],
       exclude: [...NORTH_SHORE, ...HORNSBY_BEROWRA, ...T5_SOUTH] },
     { id: "newcastle", name: "Central Coast & Hunter", lines: ["CCN", "HUN", "NRC", "NRW"],
@@ -68,4 +68,13 @@ window.TT_CONFIG = {
     { at: "Lithgow", lines: ["BMT"], only: ["BMT"], split: ["Lithgow"], side: ["Rydal", "Tarana", "Bathurst"] },
     { at: "Lidcombe", feeders: ["T6", "T7"], split: ["Lidcombe"] },
   ],
+
+  // Lines whose trains run through Central from one half to the other under a
+  // new run number (T1 Western <-> North Shore). A line on its own shows each
+  // train end to end, the new run marked at `at`; `down` is a station only the
+  // second half passes, naming that way, and `labels` the two directions.
+  through: {
+    T1: { at: "Central Electric", down: "Wynyard", labels: ["Western to North Shore", "North Shore to Western"] },
+    T9: { at: "Central Electric", down: "Wynyard", labels: ["Hornsby to Gordon", "Gordon to Hornsby"] },
+  },
 };

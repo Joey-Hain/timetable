@@ -42,6 +42,7 @@
     const lines = state.index.lines;
     const groups = { suburban: [], intercity: [], regional: [] };
     for (const code of Object.keys(lines).sort((a, b) => a.localeCompare(b, "en", { numeric: true }))) {
+      if (lines[code].network === "empty") continue;  // empty trains: only alongside a line (?ecs=1)
       (groups[lines[code].network] || groups.suburban).push(code);
     }
     const corridors = C.corridors.filter((c) => c.lines.some((l) => lines[l]));
@@ -212,6 +213,28 @@
     return master;
   }
 
+  // A through line (config.js `through`) on its own: each train that runs on
+  // through `at` under a new run number becomes one, its second run in `rb`.
+  // Joined trains vote on the direction: Down passes `down` after the change.
+  function joinThrough(trips, cfg) {
+    const at = state.byName.get(cfg.at), via = state.byName.get(cfg.down);
+    const byRun = new Map(trips.map((t) => [t.r, t]));
+    const used = new Set(), out = [];
+    for (const a of trips) {
+      if (used.has(a)) continue;
+      const last = a.s[a.s.length - 1];
+      const b = a.f && a.f[1] ? byRun.get(a.f[0]) : null;
+      if (!b || used.has(b) || last[0] !== at || b.s[0][0] !== at || b.s[0][1] < last[1]) continue;
+      used.add(a); used.add(b);
+      const first = b.s[0];
+      const join = [at, last[1], first[1] + (first[2] || 0) - last[1], first[3] || last[3] || "", ""];
+      out.push({ ...a, s: [...a.s.slice(0, -1), join, ...b.s.slice(1)], h: b.h, f: b.f, rb: b.r,
+                 vote: b.s.some((x) => x[0] === via) ? "down" : "up" });
+    }
+    for (const t of trips) if (!used.has(t)) out.push(t);
+    return out;
+  }
+
   // The part of a train's run inside a corridor (see config.js), or null.
   function clip(stops, c) {
     if (!c.stations && !c.exclude) return stops;
@@ -257,9 +280,14 @@
         const tid = ids(t);
         const shared = tid.filter(([st]) => rank.has(st));
         if (shared.length < 2) continue;
+        // which way it mostly goes past the stations it shares (not just
+        // first to last: a station only ranked by a branch train, Central
+        // Electric for a City Circle train in the South corridor, can sit off)
+        let vote = 0;
+        for (let i = 1; i < shared.length; i++) vote += Math.sign(rank.get(shared[i][0]) - rank.get(shared[i - 1][0]));
         const a = rank.get(shared[0][0]), b = rank.get(shared[shared.length - 1][0]);
-        if (a === b) continue;
-        const sg = b > a ? 1 : -1;
+        if (!vote && a === b) continue;
+        const sg = vote ? Math.sign(vote) : b > a ? 1 : -1;
         sign.set(t, sg);
         changed = true;
         // stations only this train reaches get ranks between its neighbours
@@ -275,7 +303,9 @@
       if (!changed) break;
     }
     let upVotes = 0;
-    for (const t of trips) if (sign.has(t)) upVotes += (t.d === "up" ? 1 : -1) * sign.get(t);
+    // through trains (config.js `through`) settle it on their own
+    const voters = trips.some((t) => t.vote) ? trips.filter((t) => t.vote) : trips;
+    for (const t of voters) if (sign.has(t)) upVotes += ((t.vote || t.d) === "up" ? 1 : -1) * sign.get(t);
     const upSign = upVotes >= 0 ? 1 : -1;
     for (const t of trips) t.dir = sign.has(t) ? (sign.get(t) === upSign ? "up" : "down") : t.d;
   }
@@ -382,12 +412,13 @@
     return { after, cells, pairs, secondaryFirst, label: `Change at ${state.stations[at][0]}` };
   }
 
-  function cell(s, opts) {
+  function cell(s, opts, t) {
     if (!s) return "<td></td>";
     const title = [`${s.flag === "p" ? "passes" : "arr"} ${hhmmss(s.arr)}`];
     if (s.flag !== "p" && s.dep !== s.arr) title.push(`dep ${hhmmss(s.dep)}`);
     if (s.plat) title.push(`platform ${s.plat}`);
     const attr = ` title="${esc(title.join(" · "))}"`;
+    if (t && t.e) return `<td class="ecs"${attr}>${hhmm(s.t)}</td>`;  // empty train: every timing point
     if (s.flag === "p") {
       return opts.pass ? `<td class="pass"${attr}>${hhmm(s.t)}</td>` : `<td class="pass"${attr}>|</td>`;
     }
@@ -405,7 +436,7 @@
     const working = (w) => (w ? esc(w[0]) + (w[1] ? "" : '<span class="work"> empty</span>') : "");
     let h = '<div class="tt-scroll"><table class="tt"><thead><tr><th class="stn"></th>';
     h += trips.map((t) =>
-      `<th><span class="head">${esc(t.h)}</span>` +
+      `<th${t.e ? ' class="ecs"' : ""}><span class="head">${esc(t.h)}</span>` +
       `<span class="line" style="background:${esc(lines[t.line].colour)}">${esc(t.line)}</span>` +
       `<span class="run">${esc(t.r)}</span><span class="set" title="${esc(sets[t.v] || "")}">${esc(set(t.v))}</span>` +
       `</th>`).join("");
@@ -422,7 +453,12 @@
     master.forEach((key, i) => {
       const st = Number(key.split("#")[0]);
       const gap = i && !next.has(master[i - 1] + ">" + key) ? ' class="gap"' : "";
-      h += `<tr${gap}><th class="stn">${esc(names[st][0])}</th>` + trips.map((t) => cell(t.byKey.get(key), opts)).join("") + "</tr>";
+      h += `<tr${gap}><th class="stn">${esc(names[st][0])}</th>` + trips.map((t) => cell(t.byKey.get(key), opts, t)).join("") + "</tr>";
+      // through trains change run number here (T1 at Central Electric)
+      if (key === opts.throughKey && trips.some((t) => t.rb)) {
+        h += '<tr class="change"><th class="stn">Runs on as</th>' + trips.map((t) =>
+          `<td>${t.rb && t.byKey.has(key) ? `<b>${esc(t.rb)}</b>` : ""}</td>`).join("") + "</tr>";
+      }
       for (const c of opts.changes || []) {
         if (c.after !== i) continue;
         h += `<tr class="change"><th class="stn">${esc(c.label)}</th>` +
@@ -442,6 +478,10 @@
   let renderId = 0;
   async function render() {
     syncUrl();
+    // a through line names its directions by where trains go (config.js `through`)
+    const thr = el.line.value.startsWith("l:") && C.through && C.through[el.line.value.slice(2)];
+    el.dir.options[0].text = thr ? thr.labels[0] : "Down";
+    el.dir.options[1].text = thr ? thr.labels[1] : "Up";
     const id = ++renderId;
     const codes = selectedLines();
     const day = el.date.value;
@@ -478,8 +518,9 @@
       side: ix.side ? new Set(ix.side.map((name) => byName.get(name))) : null,
     }));
     const all = [];
+    const through = !corridor && C.through && C.through[codes[0]];
     for (const [line, f] of files) {
-      for (const t of f.trips) {
+      for (const t of (through ? joinThrough(f.trips, through) : f.trips)) {
         const s = corridor ? clip(t.s, corridor) : t.s;
         if (!s) continue;
         const trip = { ...t, s, line };
@@ -487,6 +528,7 @@
         // side, that start or end at the interchange (one running through is
         // a main-line train)
         for (const sp of splits) {
+          if (trip.e) break;
           const ends = sp.ids.has(s[0][0]) || sp.ids.has(s[s.length - 1][0]);
           const feeder = sp.ix.feeders ? sp.ix.feeders.includes(line)
             : s.every(([st, , , , flag]) => flag === "p" || sp.ids.has(st) || sp.side.has(st));
@@ -496,6 +538,22 @@
           }
         }
         all.push(trip);
+      }
+    }
+    // empty trains (?ecs=1, a mock-up): each one's longest stretch through
+    // stations the timetable already has
+    if (params.get("ecs") === "1" && state.index.lines.ECS && state.index.lines.ECS.dates[day]) {
+      const shown = new Set(all.flatMap((t) => t.s.map((x) => x[0])));
+      const ecs = await getJSON(`lines/ECS/${state.index.lines.ECS.dates[day]}.json`);
+      if (id !== renderId) return;
+      for (const t of ecs.trips) {
+        let best = null, cur = null;
+        t.s.forEach((x, i) => {
+          if (!shown.has(x[0])) { cur = null; return; }
+          cur = cur ? [cur[0], i] : [i, i];
+          if (!best || cur[1] - cur[0] > best[1] - best[0]) best = [...cur];
+        });
+        if (best && best[1] > best[0]) all.push({ ...t, s: t.s.slice(best[0], best[1] + 1), line: "ECS", e: 1 });
       }
     }
     orient(all);
@@ -512,7 +570,7 @@
     }
     sortTrips(trips);
     // stations: every one a train stops at today (or passes, with passing times on)
-    const master = stationOrder(trips);
+    const master = stationOrder(trips.filter((t) => !t.e).length ? trips.filter((t) => !t.e) : trips);
     let used = master.filter((k) => trips.some((t) => {
       const s = t.byKey.get(k);
       return s && (s.flag !== "p" || el.pass.checked);
@@ -533,7 +591,7 @@
     // trains calling within the range, by their first time there
     const lo = Number(el.from.value) * 3600, hi = Number(el.to.value) * 3600;
     const firstTime = (t) => {
-      const first = used.map((k) => t.byKey.get(k)).find((s) => s && s.flag !== "p");
+      const first = used.map((k) => t.byKey.get(k)).find((s) => s && (s.flag !== "p" || t.e));
       return first ? first.t : null;
     };
     // a secondary train that takes passengers on from a primary one (HUN in
@@ -569,7 +627,8 @@
       cols = next;
     }
     el.table.innerHTML = inRange.length
-      ? table(cols, used, { pass: el.pass.checked, plat: el.plat.checked, changes }, trips)
+      ? table(cols, used, { pass: el.pass.checked, plat: el.plat.checked, changes,
+                            throughKey: through ? `${byName.get(through.at)}#1` : null }, trips)
       : '<div class="empty">No trains in that range.</div>';
   }
 

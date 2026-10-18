@@ -20,6 +20,7 @@ FILES = {
     "routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_desc,route_type,route_color\n"
                   "R4,SydneyTrains,T4,City to Hurstville,T4 Illawarra Line,2,005AA3\n"
                   "NR,SydneyTrains,,Non Revenue,Non Revenue trips,2,888888\n",
+    "vehicle_categories.txt": "vehicle_category_id,vehicle_category_name\nT8,8 car Tangara\n",
     "calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n"
                     "WD,1,1,1,1,1,0,0,20261116,20261122\n",
     "trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,vehicle_category_id\n"
@@ -49,7 +50,7 @@ def main():
         idx = build.build(d / "g.zip", d / "out", today=date(2026, 11, 17))
         st = [s[0] for s in json.loads((d / "out" / "stations.json").read_text())]
         t4 = idx["lines"]["T4"]
-        assert list(idx["lines"]) == ["T4"], "non-revenue route left out"
+        assert sorted(idx["lines"]) == ["ECS", "T4"], "non-revenue route only as empty trains"
         assert sorted(t4["dates"]) == ["2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20"], t4["dates"]
         assert len(set(t4["dates"].values())) == 1, "identical days share one file"
         trips = json.loads((d / "out" / "lines" / "T4" / f"{t4['dates']['2026-11-17']}.json").read_text())["trips"]
@@ -57,11 +58,13 @@ def main():
         up = next(t for t in trips if t["r"] == "11B")
         assert down["d"] == "down" and up["d"] == "up"
         assert down["h"] == "Hurstville" and down["v"] == "T8"
-        assert [st[s[0]] for s in down["s"]] == ["Central", "Redfern", "Sydenham", "Hurstville"]
-        assert down["s"][0] == [st.index("Central"), 8 * 3600, 120, "1", "u"], down["s"][0]
+        assert [st[s[0]] for s in down["s"]] == ["Sydney Terminal", "Redfern", "Sydenham", "Hurstville"]
+        assert down["s"][0] == [st.index("Sydney Terminal"), 8 * 3600, 120, "1", "u"], down["s"][0]
         assert down["s"][1] == [st.index("Redfern"), 8 * 3600 + 300, 30, "3"], down["s"][1]
         assert down["s"][2][-1] == "p", "passes Sydenham"
         assert up["s"][0][1] == 25 * 3600 + 600, "times past midnight kept"
+        ecs = json.loads((d / "out" / "lines" / "ECS" / f"{idx['lines']['ECS']['dates']['2026-11-17']}.json").read_text())["trips"]
+        assert [t["r"] for t in ecs] == ["99X"] and all(x[-1] == "p" for x in ecs[0]["s"])
         print("ok")
 
 
