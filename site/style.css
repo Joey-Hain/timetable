@@ -111,6 +111,7 @@ p { text-align: justify; text-justify: inter-word; }
   box-sizing: content-box;
 }
 .tt-scroll {
+  position: relative;
   overflow: auto;
   max-height: 80vh;
   border: 1px solid var(--border);
@@ -134,7 +135,7 @@ p { text-align: justify; text-justify: inter-word; }
 .tt td + td, .tt th + th { border-left: 1px solid var(--rule); }
 .tt thead th {
   position: sticky;
-  z-index: 2;
+  z-index: 3;
   font-weight: normal;
   color: var(--muted);
 }
@@ -144,13 +145,13 @@ p { text-align: justify; text-justify: inter-word; }
 .tt .stn {
   position: sticky;
   left: 0;
-  z-index: 1;
+  z-index: 2;
   text-align: left;
   color: var(--text);
   border-right: 1px solid var(--border);
   font-weight: normal;
 }
-.tt thead .stn { z-index: 3; color: var(--muted); }
+.tt thead .stn { z-index: 4; color: var(--muted); }
 .tt tbody tr:hover td, .tt tbody tr:hover th { background: var(--hover); }
 /* the column under the pointer, the same way (app.js) */
 .tt .col-hover { background: var(--hover); }
@@ -233,3 +234,9 @@ footer { font-size: 0.8rem; color: var(--muted); }
 .tt th.ecs .head { font-style: italic; color: var(--muted, #666); }
 .tt td.ecs { font-style: italic; color: var(--muted, #666); }
 .tt th.ecs .line { width: auto; white-space: nowrap; }
+/* connection arrows (?arrows=1): over the times, under the sticky headings */
+.tt-scroll svg.arrows { position: absolute; z-index: 1; pointer-events: none; color: #555; overflow: visible; }
+.tt-scroll svg.arrows path { fill: none; stroke: currentColor; stroke-width: 1.2; }
+.tt-scroll svg.arrows marker path { fill: currentColor; stroke: none; }
+/* the wait sits to the right, clear of an arrow coming up the middle */
+.tt .wait { display: block; text-align: right; }

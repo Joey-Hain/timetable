@@ -409,7 +409,7 @@
     const ok = (t) => !ix.only || ix.only.includes(t.line);
     // non-revenue trains (specials, charters) take no part in a change
     const prim = trips.filter((t) => !t.e && ok(t) && !isSecondary(t) && calls(t, mk));
-    const cells = new Map(), pairs = new Map();
+    const cells = new Map(), pairs = new Map(), arrows = [], arrowCells = new Map();
     const add = (t, html) => cells.set(t, (cells.get(t) ? cells.get(t) + "<br>" : "") + html);
     for (const t of trips) {
       const s = !t.e && ok(t) && isSecondary(t) && calls(t, sk);
@@ -426,16 +426,21 @@
       if (!best) continue;
       pairs.set(t, best.m);
       // each side names the other train and when it's there:
-      //   arriving train: "to N418 / dep 06:42 · 5 min"
+      //   arriving train: "to N418 / dep 06:42, 5 min"
       //   leaving train:  "from V710 / arr 06:38"
       const ms = calls(best.m, mk);
-      const wait = `<span class="work"> · ${Math.round(best.wait / 60)} min</span>`;
+      const mins = Math.round(best.wait / 60);
+      const wait = `<span class="work">, ${mins} min</span>`;
       const [inT, inS, outT, outS] = secondaryFirst ? [t, s, best.m, ms] : [best.m, ms, t, s];
+      // arrow mode (?arrows=1): a line from the arriving train to the leaving
+      // one, as the NSW TrainLink regional timetables draw connections
+      arrows.push({ inT, inKey: secondaryFirst ? sk : mk, outT, outKey: secondaryFirst ? mk : sk });
+      if (!arrowCells.has(outT)) arrowCells.set(outT, `<span class="work wait">${mins} min</span>`);
       add(inT, `to <b>${esc(outT.r)}</b><br><span class="work">dep ${hhmm(outS.dep)}</span>${wait}`);
       add(outT, `from <b>${esc(inT.r)}</b><br><span class="work">arr ${hhmm(inS.arr)}</span>`);
     }
     if (!pairs.size) return null;
-    return { after, cells, pairs, secondaryFirst, label: `Change at ${state.stations[at][0]}` };
+    return { after, cells, pairs, arrows, arrowCells, secondaryFirst, label: `Change at ${state.stations[at][0]}` };
   }
 
   const KIND = { ecs: "Empty cars", mtpv: "MTPV", special: "Special", charter: "Charter" };
@@ -446,7 +451,7 @@
     const title = [`${s.flag === "p" ? "passes" : "arr"} ${hhmmss(s.arr)}`];
     if (s.flag !== "p" && s.dep !== s.arr) title.push(`dep ${hhmmss(s.dep)}`);
     if (s.plat) title.push(`platform ${s.plat}`);
-    const attr = ` title="${esc(title.join(" · "))}"`;
+    const attr = ` title="${esc(title.join(", "))}"`;
     // empty runs and MTPV: every timing point; specials and charters as
     // trains, greyed
     if (t && t.e && (s.flag !== "p" || t.c === "ecs" || t.c === "mtpv")) {
@@ -486,7 +491,7 @@
     master.forEach((key, i) => {
       const st = Number(key.split("#")[0]);
       const gap = i && !next.has(master[i - 1] + ">" + key) ? ' class="gap"' : "";
-      h += `<tr${gap}><th class="stn">${esc(names[st][0])}</th>` + trips.map((t) => cell(t.byKey.get(key), opts, t)).join("") + "</tr>";
+      h += `<tr${gap} data-k="${key}"><th class="stn">${esc(names[st][0])}</th>` + trips.map((t) => cell(t.byKey.get(key), opts, t)).join("") + "</tr>";
       // through trains change run number here (T1 at Central Electric)
       if (key === opts.throughKey && trips.some((t) => t.rb)) {
         h += '<tr class="change"><th class="stn">Continues as</th>' + trips.map((t) =>
@@ -495,7 +500,7 @@
       for (const c of opts.changes || []) {
         if (c.after !== i) continue;
         h += `<tr class="change"><th class="stn">${esc(c.label)}</th>` +
-          trips.map((t) => `<td>${c.cells.get(t) || ""}</td>`).join("") + "</tr>";
+          trips.map((t) => `<td>${(opts.arrows ? c.arrowCells : c.cells).get(t) || ""}</td>`).join("") + "</tr>";
       }
     });
     // a regional train cut to this area says where it goes on to or came from
@@ -540,6 +545,56 @@
     el.table.innerHTML = table([found], rows, { pass: el.pass.checked, plat: el.plat.checked, changes: [],
       throughKey: thr ? `${state.byName.get(thr.at)}#1` : null }, [found]);
   }
+
+  const arrowMode = params.get("arrows") === "1";
+
+  // Connection arrows over the table: down from below the arriving train's
+  // last time to the row the other train leaves from, then across to it
+  function drawArrows(changes, cols) {
+    const scroll = el.table.querySelector(".tt-scroll");
+    const table = scroll && scroll.querySelector(".tt");
+    if (!table) return;
+    for (const x of scroll.querySelectorAll("svg.arrows")) x.remove();
+    const col = new Map(cols.map((t, i) => [t, i + 1]));
+    const rows = [...table.querySelectorAll("tbody tr")];
+    const rowOf = new Map(rows.filter((r) => r.dataset.k).map((r) => [r.dataset.k, r]));
+    const base = table.getBoundingClientRect();
+    const box = (c) => { const r = c.getBoundingClientRect(); return { l: r.left - base.left, r: r.right - base.left, t: r.top - base.top, b: r.bottom - base.top }; };
+    let d = "";
+    for (const c of changes) {
+      for (const a of c.arrows) {
+        const ci = col.get(a.inT), co = col.get(a.outT), ri = rowOf.get(a.inKey), ro = rowOf.get(a.outKey);
+        if (!ci || !co || !ri || !ro) continue;
+        const iIn = rows.indexOf(ri), iOut = rows.indexOf(ro);
+        let from = ri;  // a train running on past the change (CCN to Newcastle) starts below its last time
+        for (let k = iIn + 1; k < iOut; k++) if (rows[k].dataset.k && rows[k].cells[ci] && rows[k].cells[ci].textContent.trim()) from = rows[k];
+        const s = box(from.cells[ci]), t = box(ro.cells[co]);
+        const x0 = (s.l + s.r) / 2, tc = (t.l + t.r) / 2, half = 21;
+        const x1 = co > ci ? tc - half : tc + half;
+        if (iOut > iIn) d += `M${x0},${s.b - 3}V${(t.t + t.b) / 2}H${x1}`;
+        else {
+          // same row (express and all stations at Thirroul): down into the
+          // "Change at" row below, across, and up into the other train
+          const under = rows[iOut + 1] && rows[iOut + 1].classList.contains("change") ? box(rows[iOut + 1].cells[0]) : null;
+          const y = under ? (under.t + under.b) / 2 : s.b + 6;
+          d += `M${x0},${s.b - 3}V${y}H${tc}V${t.b - 3}`;
+        }
+      }
+    }
+    if (!d) return;
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("class", "arrows");
+    svg.setAttribute("width", table.offsetWidth);
+    svg.setAttribute("height", table.offsetHeight);
+    svg.innerHTML = `<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">` +
+      `<path d="M0,1L9,5L0,9z" fill="currentColor"/></marker></defs>` +
+      d.split("M").filter(Boolean).map((p) => `<path d="M${p}" marker-end="url(#ah)"/>`).join("");
+    svg.style.left = table.offsetLeft + "px";
+    svg.style.top = table.offsetTop + "px";
+    scroll.appendChild(svg);
+  }
+  window.addEventListener("resize", () => state.arrows && state.arrows());
 
   let renderId = 0;
   async function render() {
@@ -697,8 +752,12 @@
     }
     el.table.innerHTML = inRange.length
       ? table(cols, used, { pass: el.pass.checked, plat: el.plat.checked, changes,
-                            throughKey: through ? `${byName.get(through.at)}#1` : null }, trips)
+                            throughKey: through ? `${byName.get(through.at)}#1` : null, arrows: arrowMode }, trips)
       : '<div class="empty">No trains in that range.</div>';
+    if (arrowMode && inRange.length) {
+      state.arrows = () => drawArrows(changes, cols);
+      requestAnimationFrame(state.arrows);
+    } else state.arrows = null;
   }
 
   async function init() {
