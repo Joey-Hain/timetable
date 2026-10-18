@@ -45,6 +45,10 @@ SYDNEY = ZoneInfo("Australia/Sydney")
 CENTRAL = (-33.8832, 151.2065)
 DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 REGIONAL = {"NRC", "NRW", "STH", "WST"}   # NSW TrainLink long-distance trains
+# regional trains name the big-city termini city first, as the UK does
+# ("London King's Cross"); Canberra is just Canberra
+CITY_NAMES = {"Central": "Sydney Central", "Southern Cross": "Melbourne Southern Cross",
+              "Brisbane": "Brisbane Roma Street"}
 
 
 def rows(z: zipfile.ZipFile, name: str):
@@ -237,12 +241,12 @@ def build(gtfs: Path, out: Path, today: date | None = None):
                 else:
                     cur = None
             if best and best[1] > best[0]:
-                cut = {**t, "s": t["s"][best[0]:best[1] + 1]}
+                cut = {**t, "s": t["s"][best[0]:best[1] + 1], "h": CITY_NAMES.get(t["h"], t["h"])}
                 # where it really comes from / goes on to, past the cut
                 if best[0] > 0:
-                    cut["o"] = stations[t["s"][0][0]][0]
+                    cut["o"] = CITY_NAMES.get(stations[t["s"][0][0]][0], stations[t["s"][0][0]][0])
                 if best[1] < len(t["s"]) - 1:
-                    cut["t"] = stations[t["s"][-1][0]][0]
+                    cut["t"] = CITY_NAMES.get(stations[t["s"][-1][0]][0], stations[t["s"][-1][0]][0])
                 kept.append(cut)
         trips[:] = kept
 
