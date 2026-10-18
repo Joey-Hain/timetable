@@ -197,6 +197,8 @@ def build(gtfs: Path, out: Path, today: date | None = None):
             stops.append(stop)
         if len(stops) < 2:
             continue
+        if any(stations[x[0]][0].endswith(" Bus") for x in stops):
+            continue  # a train calling at coach stops is a tourist special (Cockatoo Run via Robertson)
         first, last = stations[stops[0][0]], stations[stops[-1][0]]
         # up = towards Sydney (Central), as railways count it
         up = dist_km(last[1:], CENTRAL) < dist_km(first[1:], CENTRAL)

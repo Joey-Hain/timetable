@@ -102,11 +102,17 @@
   // there ("~<n>"), so the corridor reads one way: Dungog - Hamilton, change,
   // Hamilton - Sydney.
   function keyed(trip) {
+    // a station visited twice (Central, round the City Circle) is numbered from
+    // the Sydney end: going down, a train starting at Central matches the
+    // Central a City Circle train leaves from, not the one it starts at
+    const total = new Map();
+    for (const [st] of trip.s) total.set(st, (total.get(st) || 0) + 1);
     const seen = new Map();
     const split = trip.split || new Map();
     return trip.s.map(([st, arr, dwell = 0, plat = "", flag = ""], i) => {
-      const n = (seen.get(st) || 0) + 1;
-      seen.set(st, n);
+      const k = (seen.get(st) || 0) + 1;
+      seen.set(st, k);
+      const n = trip.dir === "down" ? total.get(st) - k + 1 : k;
       const last = i === trip.s.length - 1;
       // picking up only at the start / setting down only at the end goes without saying
       if ((i === 0 && flag === "u") || (last && flag === "d")) flag = "";
@@ -122,9 +128,9 @@
     return 111.2 * Math.hypot(x, lat + 33.8832);
   };
 
-  // Merge every stopping pattern into one station order. Longest patterns go
-  // first; a station not yet listed goes straight after the one before it, so
-  // a branch stays together (Cronulla stations follow Sutherland).
+  // Merge every stopping pattern into one station order, busiest first; a
+  // station not yet listed goes in beside its neighbours, so a branch stays
+  // together (Cronulla stations follow Sutherland).
   function stationOrder(trips) {
     const seqs = new Map();
     for (const t of trips) {
@@ -137,8 +143,31 @@
     // otherwise pull whole branches in after the junction
     const order = [...seqs.entries()]
       .map(([k, e]) => [k.split(","), e.n, e.regional])
-      .sort((a, b) => a[2] - b[2] || b[0].length - a[0].length || b[1] - a[1]);
+      // busiest patterns first (trains x stations), so the main route sets
+      // the order and branches slot in beside it
+      .sort((a, b) => a[2] - b[2] || b[0].length * b[1] - a[0].length * a[1] || b[0].length - a[0].length);
     const st = (k) => Number(k.split("#")[0]);
+    // x -> stations some train reaches after x
+    const later = new Map();
+    for (const [seq] of order) {
+      seq.forEach((x, i) => {
+        if (!later.has(x)) later.set(x, new Set());
+        for (const y of seq.slice(i + 1)) later.get(x).add(y);
+      });
+    }
+    const runsBefore = (x, y) => later.has(x) && later.get(x).has(y);
+    // where to put a block of new stations: after `a` (moving on past rows
+    // that trains run through on the way to the block: Waterfall before the
+    // South Coast stations, though both follow Heathcote) or before `b`
+    // (moving back the same way)
+    const after = (a, block) => {
+      while (a + 1 < master.length && runsBefore(master[a + 1], block[0])) a++;
+      return a + 1;
+    };
+    const before = (b, block) => {
+      while (b > 0 && runsBefore(block[block.length - 1], master[b - 1])) b--;
+      return b;
+    };
     const master = [];
     for (const [seq] of order) {
       let anchor = -1;
@@ -147,23 +176,37 @@
         let i = master.indexOf(key);
         if (i >= 0) {
           if (pending.length) {
-            master.splice(i, 0, ...pending);
-            i += pending.length;
+            // stations between two known ones go next to whichever of the
+            // two is nearer Sydney: after it on the way out (Sydenham trains
+            // after Central going down), before it on the way in (before
+            // Central going up), so a branch sits by the junction it leaves
+            // the city by, not the far one (Revesby)
+            const near = anchor < 0 || distKm(st(key)) < distKm(st(master[anchor]));
+            master.splice(near ? before(i, pending) : after(anchor, pending), 0, ...pending);
+            i = master.indexOf(key);
             pending = [];
           }
           anchor = i;
-        } else if (anchor < 0) {
-          pending.push(key);
         } else {
-          master.splice(++anchor, 0, key);
+          pending.push(key);
         }
+      }
+      if (anchor >= 0 && pending.length) {
+        master.splice(after(anchor, pending), 0, ...pending);
+        pending = [];
       }
       if (pending.length) {
         // a block sharing no station (HUN beyond Hamilton): put it at the end
         // of the list nearer it, so Up still runs towards Sydney
         const mean = pending.reduce((a, k) => a + distKm(st(k)), 0) / pending.length;
         const top = master.length && Math.abs(mean - distKm(st(master[0]))) < Math.abs(mean - distKm(st(master[master.length - 1])));
-        if (top) master.unshift(...pending); else master.push(...pending);
+        // an interchange's feeders (Kiama~ for the Bomaderry shuttle) go
+        // hard against the interchange's own row, outside any other block
+        // already there (Cronulla)
+        const base = (k) => k.includes("~") ? k.replace(/~\d+/, "") : null;
+        const x = pending.filter(base).length === 1 ? master.indexOf(base(top ? pending[pending.length - 1] : pending[0])) : -1;
+        if (top) master.splice(x >= 0 ? x : 0, 0, ...pending);
+        else master.splice(x >= 0 ? x + 1 : master.length, 0, ...pending);
       }
     }
     return master;
