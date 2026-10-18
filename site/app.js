@@ -235,8 +235,7 @@
     const at = state.byName.get(C.throughAt);
     const via = cfg && state.byName.get(cfg.down);
     const loopIds = new Set((C.cityCircle || []).map((name) => state.byName.get(name)));
-    const mine = new Set(trips);
-    const used = new Set(), out = [];
+    const used = new Set(), taken = new Set(), out = [];
     for (const a of trips) {
       if (used.has(a)) continue;
       const last = a.s[a.s.length - 1];
@@ -260,7 +259,9 @@
       const part = back > 0 ? b.s.slice(0, back + 1) : b.s;
       const onward = back > 0 && back < b.s.length - 1;
       used.add(a);
-      if (!onward && mine.has(b)) used.add(b);
+      // the run it becomes doesn't also show on its own (partners are copies,
+      // so match it by line, run and start)
+      if (!onward) taken.add(`${b.line}|${b.r}|${b.s[0][1]}`);
       const first = b.s[0];
       const join = [at, last[1], first[1] + (first[2] || 0) - last[1], first[3] || last[3] || "", ""];
       join.isJoin = true;   // where "Continues as" goes
@@ -275,7 +276,7 @@
                  vote: !loop && via ? (b.s.some((x) => x[0] === via) ? "down" : "up") : undefined,
                  fixDir: loop ? a.d : undefined });
     }
-    for (const t of trips) if (!used.has(t)) out.push(t);
+    for (const t of trips) if (!used.has(t) && !taken.has(`${t.line}|${t.r}|${t.s[0][1]}`)) out.push(t);
     return out;
   }
 
@@ -678,6 +679,16 @@
     const flag = s.flag ? `<span class="flag">${s.flag}</span>` : "";
     const plat = opts.plat && s.plat ? `<span class="plat">${esc(s.plat)}</span>` : "";
     return `<td${attr}>${shown}${flag}${plat}</td>`;
+  }
+
+  // A corridor only shows a train that does something in it: three or more
+  // stops (an empty run: timing points), at least one of them out past the city (not just Central -
+  // Redfern, or round the City Circle)
+  function inCorridor(s, empty) {
+    const core = new Set(C.cityCore || []);
+    // stops for a passenger train, timing points for an empty one
+    const rows = new Set(s.filter((x) => empty || x[4] !== "p").map((x) => x[0]));
+    return rows.size >= 3 && s.some((x) => !core.has(state.stations[x[0]][0]));
   }
 
   // longest wait (s) for a train to count as running straight on as its next run
@@ -1226,7 +1237,7 @@
       if (!corridor && C.rounds && C.rounds[line]) list = joinRounds(list, byName.get(C.rounds[line]));
       for (const t of list) {
         const s = corridor ? clip(t.s, corridor, line) : t.s;
-        if (!s) continue;
+        if (!s || (corridor && !inCorridor(s))) continue;
         const trip = { ...t, s, line };
         // a train running on past the corridor (or in from beyond it) says
         // where it goes to (comes from)
@@ -1284,7 +1295,8 @@
           cur = cur ? [cur[0], i] : [i, i];
           if (!best || cur[1] - cur[0] > best[1] - best[0]) best = [...cur];
         });
-        if (best && best[1] > best[0]) all.push({ ...t, s: t.s.slice(best[0], best[1] + 1), line: "X", e: 1 });
+        const part = best ? t.s.slice(best[0], best[1] + 1) : null;
+        if (part && part.length > 1 && (!corridor || inCorridor(part, true))) all.push({ ...t, s: part, line: "X", e: 1 });
       }
     }
     orient(all);
@@ -1335,6 +1347,8 @@
       t.stops = t.stops.filter((x) => { const i = rowAt.get(x.key); if (i === undefined || i <= at) return false; at = i; return true; });
       t.byKey = new Map(t.stops.map((x) => [x.key, x]));
     }
+    // and one left with fewer than three of them isn't worth a column
+    for (let i = trips.length - 1; i >= 0; i--) if (trips[i].e && trips[i].stops.length < 3) trips.splice(i, 1);
     let used = master.filter((k) => trips.some((t) => {
       const s = t.byKey.get(k);
       return s && (s.flag !== "p" || el.pass.checked);
@@ -1386,7 +1400,10 @@
       const c = change(used, a);
       if (c && !c.secondaryFirst) for (const [t, m] of c.pairs) if (!follow.has(t)) follow.set(t, m);
     }
+    // (an empty run needs three of its times among the stations shown)
+    const shownRows = new Set(used);
     const inRange = trips.filter((t) => {
+      if (t.e && t.stops.filter((x) => shownRows.has(x.key)).length < 3) return false;
       const ft = firstTime(follow.get(t) || t);
       return ft !== null && firstTime(t) !== null && ft >= lo && ft < hi;
     });

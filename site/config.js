@@ -121,6 +121,10 @@ window.TT_CONFIG = {
   // A shuttle's round trip shown as one service in its own timetable, with
   // "Continues as" at the far end (T7 Lidcombe - Olympic Park - Lidcombe)
   rounds: { T7: "Olympic Park" },
+  // stations every corridor shares in the city: a train only touching these
+  // (an empty run Redfern - Central) doesn't belong in a corridor
+  cityCore: ["Central Electric", "Sydney Terminal", "Central ESR", "Redfern", "Town Hall", "Wynyard",
+             "Circular Quay", "St James", "Museum"],
   throughAt: "Central Electric",
   throughLines: ["T1", "T2", "T3", "T8", "T9", "CCN"],
   cityCircle: ["Town Hall", "Wynyard", "Circular Quay", "St James", "Museum"],
