@@ -708,6 +708,8 @@
         const cellOf = (t) => {
           const x = t.byKey.get(key);
           if (!x || !x.join) return "";
+          // an empty run says so rather than showing a line code
+          if (x.rbRun && x.rbLine === "X") return `<b>${esc(x.rbRun)}</b><span class="work"> empty</span>`;
           if (x.rbRun) return `${x.rbLine && x.rbLine !== t.line ? `<span class="line" style="background:${esc(lines[x.rbLine].colour)}">${esc(x.rbLine)}</span>` : ""}<b>${esc(x.rbRun)}</b>`;
           return t.rb ? `${badge(t)}<b>${esc(t.rb)}</b>` : "";
         };
