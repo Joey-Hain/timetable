@@ -55,7 +55,7 @@
         .filter(([k]) => groups[k].length)
         .map(([k, label]) => `<optgroup label="${label}">${groups[k].map((c) => opt("l:" + c, lineLabel(c))).join("")}</optgroup>`)
         .join("") +
-      (lines.X ? `<optgroup label="Other">${opt("k:mtpv", "Freight & inspection")}</optgroup>` : "");
+      `<optgroup label="Other">${lines.X ? opt("k:mtpv", "Freight & inspection") : ""}${opt("k:fleet", "Fleet breakdown")}</optgroup>`;
     const hours = [];
     for (let h = 0; h <= 28; h++) hours.push(h);
     const hl = (h) => `${pad(h)}:00`;
@@ -783,6 +783,107 @@
     el.table.innerHTML = html;
   }
 
+  // Fleet breakdown: the sets a day's timetable needs. Each set's day is
+  // its runs chained by what each forms (empty runs included); by stock,
+  // how many sets work at some point and how many are out at once at the
+  // busiest moment (a set stabled for more than an hour between runs
+  // doesn't count as out).
+  async function renderFleet(day, id) {
+    state.arrows = null;
+    el.note.textContent = "Worked out from the GTFS: each set's runs linked by what each forms, and a set ending somewhere taking the next unlinked set's day starting there later. Sets joined or split along the way count as listed; spares and sets under maintenance aren't included.";
+    el.note.hidden = false;
+    const codes = Object.keys(state.index.lines).filter((c) => state.index.lines[c].dates[day]);
+    if (!codes.length) { el.table.innerHTML = `<div class="empty">No trains on ${esc(day)}.</div>`; return; }
+    el.table.innerHTML = '<div class="empty">Loading…</div>';
+    let files;
+    try {
+      files = await Promise.all(codes.map(async (c) => [c, await getJSON(`lines/${encodeURIComponent(c)}/${state.index.lines[c].dates[day]}.json`)]));
+    } catch (e) {
+      if (id === renderId) el.table.innerHTML = `<div class="empty">Couldn't load the timetable (${esc(e.message)}).</div>`;
+      return;
+    }
+    if (id !== renderId) return;
+    // the regional trains as Sydney Trains has them are cut short; the
+    // rest are whole
+    const all = [];
+    for (const [c, f] of files) for (const t of f.trips) {
+      if (t.c === "mtpv" || t.c === "special" || t.c === "charter") continue;
+      all.push({ ...t, line: c, start: t.s[0][1], end: t.s[t.s.length - 1][1] });
+    }
+    const byRun = new Map();
+    for (const t of all) { if (!byRun.has(t.r)) byRun.set(t.r, []); byRun.get(t.r).push(t); }
+    // what each forms: that run, leaving where this one ends, soonest after
+    const next = new Map(), hasPrev = new Set();
+    for (const t of all) {
+      if (!t.f) continue;
+      const end = t.s[t.s.length - 1][0];
+      // (the same place where it can be; empty runs into sidings the feed
+      // doesn't list can start elsewhere)
+      const n = (byRun.get(t.f[0]) || []).filter((x) => x !== t && !hasPrev.has(x) && x.start >= t.end - 60)
+        .sort((x, y) => (x.s[0][0] !== end) - (y.s[0][0] !== end) || x.start - y.start)[0];
+      if (n) { next.set(t, n); hasPrev.add(n); }
+    }
+    const chains = [];
+    for (const t of all) {
+      if (hasPrev.has(t)) continue;
+      const c = [t];
+      while (next.has(c[c.length - 1]) && c.length < 80) c.push(next.get(c[c.length - 1]));
+      chains.push(c);
+    }
+    // each chain: its stock (most of its time) and when it's out
+    const sets = state.index.sets || {};
+    const stats = new Map();
+    const events = [];
+    for (const c of chains) {
+      const time = new Map();
+      for (const t of c) time.set(t.v, (time.get(t.v) || 0) + (t.end - t.start));
+      const v = [...time].sort((a, b) => b[1] - a[1])[0][0] || "?";
+      const out = [];
+      for (const t of c) {
+        const last = out[out.length - 1];
+        if (last && t.start - last[1] <= 3600) last[1] = Math.max(last[1], t.end);
+        else out.push([t.start, t.end]);
+      }
+      if (!stats.has(v)) stats.set(v, { v, chains: [], events: [] });
+      const st = stats.get(v);
+      st.chains.push(c);
+      for (const [a, b] of out) { st.events.push([a, 1], [b, -1]); events.push([a, 1], [b, -1]); }
+    }
+    const peak = (ev) => {
+      ev.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      let n = 0, best = 0, at = 0;
+      for (const [t, d] of ev) { n += d; if (n > best) { best = n; at = t; } }
+      return [best, at];
+    };
+    const cars = (v) => Number((String(v).match(/\d+/) || [0])[0]);
+    // sets needed: each set's day where the feed links it, and a set that
+    // finishes somewhere picking up the next unlinked day starting there later
+    const needed = (cs) => {
+      const pool = new Map();
+      let n = 0;
+      for (const c of [...cs].sort((a, b) => a[0].start - b[0].start)) {
+        const a = c[0], z = c[c.length - 1];
+        const free = pool.get(a.s[0][0]) || [];
+        const i = free.findIndex((t) => t <= a.start);
+        if (i >= 0) free.splice(i, 1); else n += 1;
+        const at = z.s[z.s.length - 1][0];
+        if (!pool.has(at)) pool.set(at, []);
+        pool.get(at).push(z.end);
+      }
+      return n;
+    };
+    const rows = [...stats.values()].map((st) => ({ ...st, used: needed(st.chains), peak: peak(st.events) }))
+      .sort((a, b) => (sets[a.v] || a.v).localeCompare(sets[b.v] || b.v, "en", { numeric: true }));
+    const [tp, ta] = peak(events);
+    const total = (k) => rows.reduce((n, r) => n + k(r), 0);
+    el.table.innerHTML = `<div class="tt-scroll fleet"><table class="tt"><thead><tr><th class="stn">Stock</th>` +
+      `<th>Sets needed</th><th>Out at once, at most</th><th>When</th><th>Cars out at once</th></tr></thead><tbody>` +
+      rows.map((r) => `<tr><th class="stn">${esc(sets[r.v] || r.v)} <span class="role">${esc(r.v)}</span></th>` +
+        `<td>${r.used}</td><td>${r.peak[0]}</td><td>${hhmm(r.peak[1])}</td><td>${r.peak[0] * cars(r.v) || ""}</td></tr>`).join("") +
+      `</tbody><tfoot><tr><th class="stn">All</th><td>${total((r) => r.used)}</td>` +
+      `<td>${tp}</td><td>${hhmm(ta)}</td><td>${total((r) => r.peak[0] * cars(r.v))}</td></tr></tfoot></table></div>`;
+  }
+
   // Freight & inspection: every track machine, light engine and test train
   // that day, by what it is (inspection runs, freight and light engines, new
   // fleet test runs), each train on its own, whole journeys, both ways
@@ -932,6 +1033,9 @@
   let renderId = 0;
   async function render() {
     syncUrl();
+    // the Other tools work on a whole day: only the date applies
+    const tool = el.line.value.startsWith("k:");
+    for (const e of [el.dir, el.from, el.to, el.sfrom, el.sto, el.pass, el.plat, el.nonrev, el.run]) e.disabled = tool;
     // a through line names its directions by where trains go (config.js `through`)
     const thr = el.line.value.startsWith("l:") && C.through && C.through[el.line.value.slice(2)];
     el.dir.options[0].text = thr ? thr.labels[0] : "Down";
@@ -940,7 +1044,8 @@
     const codes = selectedLines();
     const day = el.date.value;
     const notes = [];
-    if (el.run.value.trim()) return renderRun(el.run.value.trim().toUpperCase(), day, id);
+    if (el.run.value.trim() && !tool) return renderRun(el.run.value.trim().toUpperCase(), day, id);
+    if (el.line.value === "k:fleet") return renderFleet(day, id);
     if (el.line.value.startsWith("k:")) return renderKind(el.line.value.slice(2), day, id);
     const missing = codes.filter((c) => !state.index.lines[c].dates[day]);
     if (missing.length === codes.length) {
