@@ -227,6 +227,7 @@ footer { font-size: 0.8rem; color: var(--muted); }
   .tt thead th, .tt .stn { position: static; }
 }
 
-/* empty trains (?ecs=1): grey italic columns */
+/* non-revenue trains (the option): grey italic columns */
 .tt th.ecs .head { font-style: italic; color: var(--muted, #666); }
 .tt td.ecs { font-style: italic; color: var(--muted, #666); }
+.tt th.ecs .line { width: auto; white-space: nowrap; }

@@ -45,6 +45,23 @@ SYDNEY = ZoneInfo("Australia/Sydney")
 CENTRAL = (-33.8832, 151.2065)
 DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 REGIONAL = {"NRC", "NRW", "STH", "WST"}   # NSW TrainLink long-distance trains
+
+
+def non_revenue(line: str, t: dict, sets: dict) -> str | None:
+    """The kind of a train outside the public timetable, or None: "charter",
+    "special" (heritage and tourist trains: Z stock, the Indian Pacific),
+    "ecs" (empty NSW stock) or "mtpv" (track machines, locomotives: stock the
+    feed doesn't list)."""
+    v = t.get("vehicle_category_id", "")
+    if (t.get("trip_headsign") or "").strip() == "Charter":
+        return "charter"
+    if v.startswith("Z"):
+        return "special"
+    if not line:
+        return "ecs" if v in sets else "mtpv"
+    return None
+
+
 # Central is three stations as Sydney Trains runs it: the terminal (platforms
 # 1-15), the suburban "electric" platforms (16-23) and the Eastern Suburbs
 # Railway underground (24-25)
@@ -53,6 +70,9 @@ def central_part(platform: str) -> str:
     return "Sydney Terminal" if 1 <= n <= 15 else "Central Electric" if 16 <= n <= 23 else \
         "Central ESR" if n in (24, 25) else "Central"
 
+
+# a train's headboard says Central, whichever part of it the train uses
+HEAD_NAMES = {"Sydney Terminal": "Central", "Central Electric": "Central", "Central ESR": "Central"}
 
 # regional trains name the big-city termini city first, as the UK does
 # ("London King's Cross"); Canberra is just Canberra
@@ -167,15 +187,11 @@ def build(gtfs: Path, out: Path, today: date | None = None):
         if not days:
             continue
         workings[t["trip_id"]] = (t["trip_id"].split(".")[0], (t.get("block_id") or "").strip(), days)
-        if not line:
-            # non-revenue and out-of-service moves: kept as empty trains if
-            # they're Sydney Trains / NSW TrainLink stock (not track machines,
-            # locomotives or heritage trains)
-            if t.get("vehicle_category_id") in sets:
-                ecs_meta[t["trip_id"]] = (t, days)
+        # outside the public timetable: kept apart and shown only on request
+        cat = non_revenue(line, t, sets)
+        if cat:
+            ecs_meta[t["trip_id"]] = (t, days, cat)
             continue
-        if t.get("vehicle_category_id", "").startswith("Z") or (t.get("trip_headsign") or "").strip() == "Charter":
-            continue  # heritage, tourist (Indian Pacific) and charter trains: not in the public timetable
         lines.setdefault(line, {"name": r.get("route_desc") or r.get("route_long_name") or line,
                                 "colour": "#" + (r.get("route_color") or "888888"),
                                 "network": "regional" if line in REGIONAL else
@@ -203,6 +219,8 @@ def build(gtfs: Path, out: Path, today: date | None = None):
         board = [i for i, x in enumerate(sts) if x["pickup_type"] != "1"]
         alight = [i for i, x in enumerate(sts) if x["drop_off_type"] != "1"]
         if not board or not alight or alight[-1] <= board[0]:
+            # on a passenger line but carries no one: an empty run
+            ecs_meta[tid] = (t, days, "ecs" if t.get("vehicle_category_id") in sets else "mtpv")
             continue  # carries no passengers
         part = sts[board[0]:alight[-1] + 1]
         stops = []
@@ -229,7 +247,7 @@ def build(gtfs: Path, out: Path, today: date | None = None):
         up = dist_km(last[1:], CENTRAL) < dist_km(first[1:], CENTRAL)
         headsign = (part[0].get("stop_headsign") or "").strip()
         if not headsign or headsign.lower() in ("empty train", "special"):
-            headsign = last[0]
+            headsign = HEAD_NAMES.get(last[0], last[0])
         trip = {"r": tid.split(".")[0], "d": "up" if up else "down", "h": headsign,
                 "v": t.get("vehicle_category_id", ""), "s": stops}
         for d in days:
@@ -241,22 +259,30 @@ def build(gtfs: Path, out: Path, today: date | None = None):
                 day_trip["f"] = nxt    # forms
             by_line_day[(line, d)].append(day_trip)
 
-    # empty trains, every timing point a "pass"; the site only shows them on
-    # request (?ecs=1), clipped to the stations in view
-    for tid, (t, days) in ecs_meta.items():
+    # non-revenue trains in one file per day ("X"), each with its kind "c":
+    # empty runs and MTPV (track machines, locomotives) with every timing
+    # point a pass; specials and charters with their stops. The site shows
+    # them on request, clipped to the stations in view.
+    for tid, (t, days, cat) in ecs_meta.items():
         stops = []
-        for x in sorted(stop_times.get(tid, ()), key=lambda x: int(x["stop_sequence"])):
+        sts = sorted(stop_times.get(tid, ()), key=lambda x: int(x["stop_sequence"]))
+        for x in sts:
             if x["stop_id"] not in stop_station or stations[stop_station[x["stop_id"]]][0].endswith(" Bus"):
                 continue
+            up_, down_ = x["pickup_type"] != "1", x["drop_off_type"] != "1"
+            flag = "p" if cat in ("ecs", "mtpv") else "" if up_ and down_ else "d" if down_ else "u" if up_ else "p"
             arr, dep = secs(x["arrival_time"] or x["departure_time"]), secs(x["departure_time"] or x["arrival_time"])
-            stop = [stop_station[x["stop_id"]], arr, dep - arr, stop_platform.get(x["stop_id"], ""), "p"]
+            stop = [stop_station[x["stop_id"]], arr, dep - arr, stop_platform.get(x["stop_id"], ""), flag]
             stops.append(stop)
         if len(stops) < 2:
             continue
         first, last = stations[stops[0][0]], stations[stops[-1][0]]
         up = dist_km(last[1:], CENTRAL) < dist_km(first[1:], CENTRAL)
-        trip = {"r": tid.split(".")[0], "d": "up" if up else "down", "h": "Empty",
-                "v": t.get("vehicle_category_id", ""), "s": stops}
+        headsign = (sts[0].get("stop_headsign") or t.get("trip_headsign") or "").strip()
+        if not headsign or headsign.lower() in ("empty train", "special", "charter"):
+            headsign = HEAD_NAMES.get(last[0], last[0])
+        trip = {"r": tid.split(".")[0], "d": "up" if up else "down", "h": headsign,
+                "v": t.get("vehicle_category_id", ""), "c": cat, "s": stops}
         for d in days:
             prev, nxt = links.get((tid, d), (None, None))
             day_trip = dict(trip)
@@ -264,14 +290,14 @@ def build(gtfs: Path, out: Path, today: date | None = None):
                 day_trip["b"] = prev
             if nxt:
                 day_trip["f"] = nxt
-            by_line_day[("ECS", d)].append(day_trip)
+            by_line_day[("X", d)].append(day_trip)
     if ecs_meta:
-        lines["ECS"] = {"name": "Empty trains", "colour": "#888888", "network": "empty"}
+        lines["X"] = {"name": "Non-revenue", "colour": "#888888", "network": "nonrev"}
 
     # The regional trains as Sydney Trains has them are only right inside its
     # own (suburban and intercity) area, so cut them to their longest stretch
     # of stations Sydney Trains' own trains run through
-    served = {s[0] for (line, d), trips in by_line_day.items() if line not in REGIONAL and line != "ECS"
+    served = {s[0] for (line, d), trips in by_line_day.items() if line not in REGIONAL and line != "X"
               for t in trips for s in t["s"]}
     for (line, d), trips in by_line_day.items():
         if line not in REGIONAL:

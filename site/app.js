@@ -6,7 +6,8 @@
   const el = {
     line: $("line"), date: $("date"), dir: $("dir"), from: $("from"), to: $("to"),
     sfrom: $("sfrom"), sto: $("sto"),
-    pass: $("pass"), plat: $("plat"), note: $("note"), table: $("table"), updated: $("updated"),
+    pass: $("pass"), plat: $("plat"), nonrev: $("nonrev"), run: $("run"), keyNr: $("key-nr"),
+    note: $("note"), table: $("table"), updated: $("updated"),
   };
   const state = { index: null, stations: null, files: new Map() };
   const params = new URLSearchParams(location.search);
@@ -42,7 +43,7 @@
     const lines = state.index.lines;
     const groups = { suburban: [], intercity: [], regional: [] };
     for (const code of Object.keys(lines).sort((a, b) => a.localeCompare(b, "en", { numeric: true }))) {
-      if (lines[code].network === "empty") continue;  // empty trains: only alongside a line (?ecs=1)
+      if (lines[code].network === "nonrev") continue;  // non-revenue trains: only alongside the others
       (groups[lines[code].network] || groups.suburban).push(code);
     }
     const corridors = C.corridors.filter((c) => c.lines.some((l) => lines[l]));
@@ -72,6 +73,8 @@
     }
     el.pass.checked = params.get("pass") === "1";
     el.plat.checked = params.get("plat") === "1";
+    el.nonrev.checked = params.get("nr") === "1" || params.get("ecs") === "1";
+    el.run.value = params.get("run") || "";
     if (!el.line.value) el.line.selectedIndex = 0;
   }
 
@@ -92,6 +95,8 @@
     if (el.sto.value && el.sto.selectedIndex < el.sto.options.length - 1) p.set("st", el.sto.value);
     if (el.pass.checked) p.set("pass", "1");
     if (el.plat.checked) p.set("plat", "1");
+    if (el.nonrev.checked) p.set("nr", "1");
+    if (el.run.value.trim()) p.set("run", el.run.value.trim().toUpperCase());
     history.replaceState(null, "", "?" + p.toString());
   }
 
@@ -228,11 +233,30 @@
       used.add(a); used.add(b);
       const first = b.s[0];
       const join = [at, last[1], first[1] + (first[2] || 0) - last[1], first[3] || last[3] || "", ""];
-      out.push({ ...a, s: [...a.s.slice(0, -1), join, ...b.s.slice(1)], h: b.h, f: b.f, rb: b.r,
+      out.push({ ...a, s: [...a.s.slice(0, -1), join, ...b.s.slice(1)], h: finalHead(a, b, cfg), f: b.f, rb: b.r,
                  vote: b.s.some((x) => x[0] === via) ? "down" : "up" });
     }
     for (const t of trips) if (!used.has(t)) out.push(t);
     return out;
+  }
+
+  // The headboard a through train shows: its own if that already names where
+  // it ends up ("Penrith via Gordon"), otherwise where it ends up via the
+  // through station ("Hornsby via Central", not "Central")
+  function finalHead(a, b, cfg) {
+    const end = state.stations[b.s[b.s.length - 1][0]][0];
+    return a.h.startsWith(end) ? a.h : `${end} via ${cfg.via || "Central"}`;
+  }
+
+  // In a corridor a through line's trains stay as two runs, but the first
+  // shows the headboard of where it ends up
+  function throughHeads(trips, cfg) {
+    const at = state.byName.get(cfg.at);
+    const byRun = new Map(trips.map((t) => [t.r, t]));
+    return trips.map((a) => {
+      const b = a.f && a.f[1] ? byRun.get(a.f[0]) : null;
+      return b && a.s[a.s.length - 1][0] === at && b.s[0][0] === at ? { ...a, h: finalHead(a, b, cfg) } : a;
+    });
   }
 
   // The part of a train's run inside a corridor (see config.js), or null.
@@ -382,11 +406,12 @@
     // ix.only: both trains on these lines (no change into a regional train,
     // which has to be booked)
     const ok = (t) => !ix.only || ix.only.includes(t.line);
-    const prim = trips.filter((t) => ok(t) && !isSecondary(t) && calls(t, mk));
+    // non-revenue trains (specials, charters) take no part in a change
+    const prim = trips.filter((t) => !t.e && ok(t) && !isSecondary(t) && calls(t, mk));
     const cells = new Map(), pairs = new Map();
     const add = (t, html) => cells.set(t, (cells.get(t) ? cells.get(t) + "<br>" : "") + html);
     for (const t of trips) {
-      const s = ok(t) && isSecondary(t) && calls(t, sk);
+      const s = !t.e && ok(t) && isSecondary(t) && calls(t, sk);
       if (!s) continue;
       // a feeder has to start or end here; one running through is a main-line train
       if (ix.split && !(secondaryFirst ? t.stops[t.stops.length - 1].key === sk || t.stops.slice(-2).some((x) => x.key === sk)
@@ -412,13 +437,20 @@
     return { after, cells, pairs, secondaryFirst, label: `Change at ${state.stations[at][0]}` };
   }
 
+  const KIND = { ecs: "Empty cars", mtpv: "MTPV", special: "Special", charter: "Charter" };
+  const KIND_COLOUR = { ecs: "#888888", mtpv: "#8a6a3a", special: "#7a4f9e", charter: "#7a4f9e" };
+
   function cell(s, opts, t) {
     if (!s) return "<td></td>";
     const title = [`${s.flag === "p" ? "passes" : "arr"} ${hhmmss(s.arr)}`];
     if (s.flag !== "p" && s.dep !== s.arr) title.push(`dep ${hhmmss(s.dep)}`);
     if (s.plat) title.push(`platform ${s.plat}`);
     const attr = ` title="${esc(title.join(" · "))}"`;
-    if (t && t.e) return `<td class="ecs"${attr}>${hhmm(s.t)}</td>`;  // empty train: every timing point
+    // empty runs and MTPV: every timing point; specials and charters as
+    // trains, greyed
+    if (t && t.e && (s.flag !== "p" || t.c === "ecs" || t.c === "mtpv")) {
+      return `<td class="ecs"${attr}>${hhmm(s.t)}${s.flag && s.flag !== "p" ? `<span class="flag">${s.flag}</span>` : ""}</td>`;
+    }
     if (s.flag === "p") {
       return opts.pass ? `<td class="pass"${attr}>${hhmm(s.t)}</td>` : `<td class="pass"${attr}>|</td>`;
     }
@@ -437,7 +469,7 @@
     let h = '<div class="tt-scroll"><table class="tt"><thead><tr><th class="stn"></th>';
     h += trips.map((t) =>
       `<th${t.e ? ' class="ecs"' : ""}><span class="head">${esc(t.h)}</span>` +
-      `<span class="line" style="background:${esc(lines[t.line].colour)}">${esc(t.line)}</span>` +
+      `<span class="line" style="background:${esc(t.e ? KIND_COLOUR[t.c] || "#888888" : lines[t.line].colour)}">${esc(t.e ? KIND[t.c] || "Non-revenue" : t.line)}</span>` +
       `<span class="run">${esc(t.r)}</span><span class="set" title="${esc(sets[t.v] || "")}">${esc(set(t.v))}</span>` +
       `</th>`).join("");
     h += '</tr></thead><tbody><tr class="worked"><th class="stn">Formed by</th>' +
@@ -456,7 +488,7 @@
       h += `<tr${gap}><th class="stn">${esc(names[st][0])}</th>` + trips.map((t) => cell(t.byKey.get(key), opts, t)).join("") + "</tr>";
       // through trains change run number here (T1 at Central Electric)
       if (key === opts.throughKey && trips.some((t) => t.rb)) {
-        h += '<tr class="change"><th class="stn">Runs on as</th>' + trips.map((t) =>
+        h += '<tr class="change"><th class="stn">Continues as</th>' + trips.map((t) =>
           `<td>${t.rb && t.byKey.has(key) ? `<b>${esc(t.rb)}</b>` : ""}</td>`).join("") + "</tr>";
       }
       for (const c of opts.changes || []) {
@@ -475,6 +507,40 @@
 
   // ------------------------------------------------------------ render
 
+  // One run on its own (the Run box): every line that day, non-revenue
+  // included, through trains joined, its whole journey
+  async function renderRun(run, day, id) {
+    const codes = Object.keys(state.index.lines).filter((c) => state.index.lines[c].dates[day]);
+    el.table.innerHTML = '<div class="empty">Loading…</div>';
+    let found = null;
+    try {
+      for (const c of codes) {
+        const f = await getJSON(`lines/${encodeURIComponent(c)}/${state.index.lines[c].dates[day]}.json`);
+        const thr = C.through && C.through[c];
+        const t = (thr ? joinThrough(f.trips, thr) : f.trips)
+          .find((x) => x.r.toUpperCase() === run || (x.rb || "").toUpperCase() === run);
+        if (t) { found = { ...t, line: c, e: c === "X" ? 1 : 0 }; break; }
+      }
+    } catch (e) {
+      if (id === renderId) el.table.innerHTML = `<div class="empty">Couldn't load the timetable (${esc(e.message)}).</div>`;
+      return;
+    }
+    if (id !== renderId) return;
+    el.note.hidden = true;
+    el.keyNr.hidden = !(found && found.e);
+    if (!found) {
+      el.table.innerHTML = `<div class="empty">No run ${esc(run)} on ${esc(day)}.</div>`;
+      return;
+    }
+    found.dir = found.d;
+    found.stops = keyed(found);
+    found.byKey = new Map(found.stops.map((s) => [s.key, s]));
+    const rows = found.stops.filter((s) => s.flag !== "p" || el.pass.checked || found.e).map((s) => s.key);
+    const thr = C.through && C.through[found.line];
+    el.table.innerHTML = table([found], rows, { pass: el.pass.checked, plat: el.plat.checked, changes: [],
+      throughKey: thr ? `${state.byName.get(thr.at)}#1` : null }, [found]);
+  }
+
   let renderId = 0;
   async function render() {
     syncUrl();
@@ -486,6 +552,7 @@
     const codes = selectedLines();
     const day = el.date.value;
     const notes = [];
+    if (el.run.value.trim()) return renderRun(el.run.value.trim().toUpperCase(), day, id);
     const missing = codes.filter((c) => !state.index.lines[c].dates[day]);
     if (missing.length === codes.length) {
       el.table.innerHTML = `<div class="empty">${day < state.index.first || day > state.index.last
@@ -520,7 +587,8 @@
     const all = [];
     const through = !corridor && C.through && C.through[codes[0]];
     for (const [line, f] of files) {
-      for (const t of (through ? joinThrough(f.trips, through) : f.trips)) {
+      const thr = C.through && C.through[line];
+      for (const t of (through ? joinThrough(f.trips, through) : thr ? throughHeads(f.trips, thr) : f.trips)) {
         const s = corridor ? clip(t.s, corridor) : t.s;
         if (!s) continue;
         const trip = { ...t, s, line };
@@ -540,11 +608,13 @@
         all.push(trip);
       }
     }
-    // empty trains (?ecs=1, a mock-up): each one's longest stretch through
+    // non-revenue trains (the option): each one's longest stretch through
     // stations the timetable already has
-    if (params.get("ecs") === "1" && state.index.lines.ECS && state.index.lines.ECS.dates[day]) {
+    const X = state.index.lines.X;
+    el.keyNr.hidden = !el.nonrev.checked;
+    if (el.nonrev.checked && X && X.dates[day]) {
       const shown = new Set(all.flatMap((t) => t.s.map((x) => x[0])));
-      const ecs = await getJSON(`lines/ECS/${state.index.lines.ECS.dates[day]}.json`);
+      const ecs = await getJSON(`lines/X/${X.dates[day]}.json`);
       if (id !== renderId) return;
       for (const t of ecs.trips) {
         let best = null, cur = null;
@@ -553,7 +623,7 @@
           cur = cur ? [cur[0], i] : [i, i];
           if (!best || cur[1] - cur[0] > best[1] - best[0]) best = [...cur];
         });
-        if (best && best[1] > best[0]) all.push({ ...t, s: t.s.slice(best[0], best[1] + 1), line: "ECS", e: 1 });
+        if (best && best[1] > best[0]) all.push({ ...t, s: t.s.slice(best[0], best[1] + 1), line: "X", e: 1 });
       }
     }
     orient(all);
@@ -647,7 +717,7 @@
     const ymd = (s) => dmy(new Date(`${s}T12:00:00+10:00`));
     el.updated.textContent = `Timetable as at ${dmy(built)} for period ${ymd(state.index.first)} - ${ymd(state.index.last)}`;
     for (const e of [el.line, el.dir]) e.addEventListener("change", () => { el.sfrom.value = ""; el.sto.value = ""; el.sfrom.innerHTML = ""; el.sto.innerHTML = ""; render(); });
-    for (const e of [el.date, el.from, el.to, el.sfrom, el.sto, el.pass, el.plat]) e.addEventListener("change", render);
+    for (const e of [el.date, el.from, el.to, el.sfrom, el.sto, el.pass, el.plat, el.nonrev, el.run]) e.addEventListener("change", render);
     render();
   }
 

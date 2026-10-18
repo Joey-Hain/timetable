@@ -47,6 +47,13 @@
         <input type="checkbox" id="plat">
         <span>Platforms</span>
       </label>
+      <label class="check">
+        <input type="checkbox" id="nonrev">
+        <span>Non-revenue</span>
+      </label>
+      <label>Run
+        <input type="search" id="run" placeholder="e.g. 701C" autocomplete="off" spellcheck="false">
+      </label>
     </section>
 
     <p id="note" class="note" hidden></p>
@@ -55,7 +62,7 @@
   <div id="table" class="tt-wrap"></div>
 
   <div class="page">
-    <p class="key"><b>d</b> set down only &nbsp; <b>u</b> pick up only &nbsp; <b>empty</b> runs without passengers</p>
+    <p class="key"><b>d</b> set down only &nbsp; <b>u</b> pick up only &nbsp; <b>empty</b> runs without passengers<span id="key-nr" hidden> &nbsp; <b>Empty cars</b> train without passengers &nbsp; <b>MTPV</b> track machine or locomotive &nbsp; <b>Special</b> heritage or tourist train &nbsp; <b>Charter</b> private hire &nbsp; (none of these in the public timetable)</span></p>
     <footer><span id="updated"></span><br>Data: <a href="https://opendata.transport.nsw.gov.au/" target="_blank" rel="noopener">Transport for NSW Open Data</a>, CC BY 4.0</footer>
   </div>
 
