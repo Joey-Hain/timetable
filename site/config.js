@@ -27,6 +27,7 @@ window.TT_CONFIG = {
   //   stations: only these stations (a list), or
   //   exclude:  every station but these
   //   lineStations: a line's own stations, for a line only partly in it
+  //   need:     only trains whose stretch takes in one of these
   //   dropVia:  leave out trains that run through one of these stations
   //             between two that are shown (CCN via the North Shore in the
   //             Northern corridor). Otherwise a train that leaves the corridor
@@ -36,7 +37,8 @@ window.TT_CONFIG = {
     { id: "northern", name: "Northern via Strathfield", lines: ["T9", "CCN", "NRC", "NRW"],
       exclude: [...NORTH_SHORE, ...MAIN_WEST, ...HUNTER], dropVia: ["Chatswood"] },
     { id: "northshore", name: "North Shore", lines: ["T1", "T9", "CCN"],
-      stations: ["Central Electric", "Sydney Terminal", ...NORTH_SHORE, ...HORNSBY_BEROWRA] },
+      stations: ["Central Electric", "Sydney Terminal", ...NORTH_SHORE, ...HORNSBY_BEROWRA],
+      need: NORTH_SHORE.filter((n) => n !== "Town Hall" && n !== "Wynyard") },
     { id: "western", name: "Western & Blue Mountains", lines: ["T1", "T5", "BMT", "WST"],
       exclude: [...NORTH_SHORE, ...HORNSBY_BEROWRA, ...T5_SOUTH] },
     { id: "newcastle", name: "Central Coast & Hunter", lines: ["CCN", "HUN", "NRC", "NRW"],

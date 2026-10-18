@@ -6,7 +6,7 @@
   const el = {
     line: $("line"), date: $("date"), dir: $("dir"), from: $("from"), to: $("to"),
     sfrom: $("sfrom"), sto: $("sto"),
-    pass: $("pass"), plat: $("plat"), nonrev: $("nonrev"), run: $("run"),
+    pass: $("pass"), plat: $("plat"), nonrev: $("nonrev"), run: $("run"), diag: $("diag"),
     note: $("note"), table: $("table"), updated: $("updated"),
   };
   const state = { index: null, stations: null, files: new Map() };
@@ -77,6 +77,7 @@
     el.plat.checked = params.get("plat") === "1";
     el.nonrev.checked = params.get("nr") === "1" || params.get("ecs") === "1";
     el.run.value = params.get("run") || "";
+    el.diag.checked = params.get("diag") === "1";
     if (!el.line.value) el.line.selectedIndex = 0;
   }
 
@@ -100,6 +101,7 @@
     if (el.plat.checked) p.set("plat", "1");
     if (el.nonrev.checked) p.set("nr", "1");
     if (el.run.value.trim()) p.set("run", el.run.value.trim().toUpperCase());
+    if (el.diag.checked) p.set("diag", "1");
     history.replaceState(null, "", "?" + p.toString());
   }
 
@@ -122,14 +124,16 @@
       let [st, arr, dwell = 0, plat = "", flag = ""] = stop;
       const k = (seen.get(st) || 0) + 1;
       seen.set(st, k);
-      const n = trip.dir === "down" && !trip.round ? total.get(st) - k + 1 : k;
+      // a shuttle's trip back from the far end (Olympic Park - Lidcombe) meets
+      // Lidcombe as a round trip's second visit
+      const n = trip.dir === "down" && !trip.round ? total.get(st) - k + 1 : k + (trip.back && st !== trip.s[0][0] ? 1 : 0);
       const last = i === trip.s.length - 1;
       // picking up only at the start / setting down only at the end goes without saying
       if ((i === 0 && flag === "u") || (last && flag === "d")) flag = "";
       const base = `${st}#${n}`;
       return { key: base + (split.get(st) || ""), base, st, arr, dep: arr + dwell,
                t: last || flag === "p" ? arr : arr + dwell, plat, flag, last, first: i === 0, join: !!stop.isJoin,
-               rbRun: stop.rbRun, rbLine: stop.rbLine, rbThen: stop.rbThen, kind: stop.kind };
+               rbRun: stop.rbRun, rbLine: stop.rbLine, rbKind: stop.rbKind, rbThen: stop.rbThen, kind: stop.kind };
     });
   }
 
@@ -245,6 +249,9 @@
       // round the City Circle (in any timetable), or on as another run in
       // a line's own timetable (T1 Western to North Shore, T9 to T1)
       const loop = b.s.length > 2 && loopIds.has(b.s[1][0]) && b.s.some((x, i) => i > 1 && x[0] === at);
+      // a train that turns back the way it came is a new service, not a
+      // through train (T8 Macarthur - Central - Revesby at weekends)
+      if (!loop && a.s.length > 1 && b.s.length > 1 && a.s[a.s.length - 2][0] === b.s[1][0]) continue;
       if (!loop && !lineView) continue;
       // a lap that goes on out (Central, the loop, Central, Sydenham) joins
       // as far as Central and shows where it carries on to
@@ -256,7 +263,11 @@
       const first = b.s[0];
       const join = [at, last[1], first[1] + (first[2] || 0) - last[1], first[3] || last[3] || "", ""];
       join.isJoin = true;   // where "Continues as" goes
+      // a train on as another line (T9 on as T1) gets rows of its own for
+      // that part, so it doesn't run back up the rows its own line uses
+      const other = !loop && b.line !== a.line;
       out.push({ ...a, s: [...a.s.slice(0, -1), join, ...part.slice(1)],
+                 split: other ? new Map([...(a.split || []), ...part.slice(1).map((x) => [x[0], "~x"])]) : a.split,
                  h: loop ? a.h : finalHead(a, b), f: onward ? null : b.f,
                  t: onward ? state.stations[b.s[b.s.length - 1][0]][0] : b.t,
                  rb: b.r, rbLine: b.line, rbLoop: loop,
@@ -265,6 +276,15 @@
     }
     for (const t of trips) if (!used.has(t)) out.push(t);
     return out;
+  }
+
+  // A City Circle lap the other way round (Museum before Town Hall) gets
+  // its own rows for the loop: a Map station -> suffix, or null
+  function cityCircleRows(s) {
+    const id = (name) => state.byName.get(name);
+    const mu = s.findIndex((x) => x[0] === id("Museum")), th = s.findIndex((x) => x[0] === id("Town Hall"));
+    if (mu < 0 || th < 0 || mu > th) return null;
+    return new Map((C.cityCircle || []).map((name) => [id(name), "~m"]));
   }
 
   // A shuttle's round trip as one service (config.js `rounds`: T7 Lidcombe -
@@ -283,7 +303,7 @@
       join.isJoin = true;
       out.push({ ...a, s: [...a.s.slice(0, -1), join, ...b.s.slice(1)], h: b.h, f: b.f, rb: b.r, fixDir: "down", round: true });
     }
-    for (const t of trips) if (!used.has(t)) out.push({ ...t, fixDir: "down", round: true });
+    for (const t of trips) if (!used.has(t)) out.push({ ...t, fixDir: "down", round: true, back: t.s[0][0] === at });
     return out;
   }
 
@@ -462,6 +482,11 @@
       for (let i = runs[k - 1].b + 1; i < runs[k].a; i++) if (via.has(name(stops[i][0]))) return null;
     }
     const calls = (r) => stops.slice(r.a, r.b + 1).filter((s) => s[4] !== "p").length;
+    // c.need: the stretch has to take in one of these (the North Shore, not
+    // just Hornsby - Berowra on the way up the Main North)
+    const need = c.need ? new Set(c.need) : null;
+    if (need) for (let k = runs.length - 1; k >= 0; k--) if (!stops.slice(runs[k].a, runs[k].b + 1).some((s) => need.has(name(s[0])))) runs.splice(k, 1);
+    if (!runs.length) return null;
     const best = runs.reduce((x, y) => (calls(y) > calls(x) ? y : x));
     return calls(best) >= 2 ? stops.slice(best.a, best.b + 1) : null;
   }
@@ -654,6 +679,20 @@
     return `<td${attr}>${shown}${flag}${plat}</td>`;
   }
 
+  // Central's parts as a headboard says them
+  const HEAD = (name) => (/^(Sydney Terminal|Central Electric|Central ESR)$/.test(name) ? "Central" : name);
+
+  // a line's badge, or an empty run's (Empty cars and the like)
+  function lineBadge(line, kind) {
+    const lines = state.index.lines;
+    if (!line) return "";
+    if (line === "X") {
+      const k = kind || "ecs";
+      return `<span class="line" style="background:${KIND_COLOUR[k] || "#888888"}">${esc(KIND[k] || "Empty")}</span>`;
+    }
+    return `<span class="line" style="background:${esc(lines[line].colour)}">${esc(line)}</span>`;
+  }
+
   function table(trips, master, opts, allTrips) {
     const names = state.stations;
     const lines = state.index.lines;
@@ -664,16 +703,19 @@
     const working = (w) => (w ? esc(w[0]) + (w[1] ? "" : '<span class="work"> empty</span>') +
       (w[2] ? `<br><span class="work">${esc(w[2])}</span>` : "") : "");
     let h = '<div class="tt-scroll"><table class="tt"><thead><tr><th class="stn"></th>';
-    h += trips.map((t) =>
-      `<th${t.e ? ' class="ecs"' : ""}><span class="head">${esc(t.h)}</span>` +
+    h += trips.map((t) => t.chain
+      // a chain of runs (run search): the set heads it, its first run below
+      ? `<th><span class="run">${esc(t.chain)}</span><span class="set" title="${esc(sets[t.v] || "")}">${esc(set(t.v))}</span></th>`
+      : `<th${t.e ? ' class="ecs"' : ""}><span class="head">${esc(t.h)}</span>` +
       `<span class="line" style="background:${esc(t.e ? KIND_COLOUR[kindOf(t)] || "#888888" : lines[t.line].colour)}">${esc(t.e ? KIND[kindOf(t)] || "Non-revenue" : t.line)}</span>` +
       `<span class="run">${esc(t.r)}</span><span class="set" title="${esc(sets[t.v] || "")}">${esc(set(t.v))}</span>` +
       `</th>`).join("");
     // a regional train cut to this area: where it came from goes with Formed
     // by, where it goes on to with Forms
     const from = (t) => (t.o ? `<span class="work">arrives from ${esc(t.o)}</span>` : "");
-    h += '</tr></thead><tbody><tr class="worked"><th class="stn">Formed by</th>' +
-      trips.map((t) => `<td>${[working(t.b), from(t)].filter(Boolean).join("<br>")}</td>`).join("") + "</tr>";
+    const chain = trips.some((t) => t.chain);
+    h += `</tr></thead><tbody>${chain ? '<tr class="change">' : '<tr class="worked">'}<th class="stn">${chain ? "Starts as" : "Formed by"}</th>` +
+      trips.map((t) => `<td>${t.chain ? `${lineBadge(t.firstLine, t.firstKind)}<b>${esc(t.firstRun)}</b>` : [working(t.b), from(t)].filter(Boolean).join("<br>")}</td>`).join("") + "</tr>";
     // a rule above a station no train reaches straight from the one listed
     // before it: the start of another branch
     const next = new Set();
@@ -702,15 +744,12 @@
       if (trips.some((t) => t.byKey.has(key) && t.byKey.get(key).join && (t.rb || t.byKey.get(key).rbRun))) {
         // a change of line shows the new line's code (T9 on as T1); a lap of
         // the City Circle shows CC
-        const badge = (t) => t.rbLoop ? '<span class="line cc">CC</span>'
-          : t.rbLine && t.rbLine !== t.line ? `<span class="line" style="background:${esc(lines[t.rbLine].colour)}">${esc(t.rbLine)}</span>` : "";
+        const badge = (t) => t.rbLoop ? '<span class="line cc">CC</span>' : lineBadge(t.rbLine || t.line);
         // a chain of runs (run search) carries its next run on the stop
         const cellOf = (t) => {
           const x = t.byKey.get(key);
           if (!x || !x.join) return "";
-          // an empty run says so rather than showing a line code
-          if (x.rbRun && x.rbLine === "X") return `<b>${esc(x.rbRun)}</b><span class="work"> empty</span>`;
-          if (x.rbRun) return `${x.rbLine && x.rbLine !== t.line ? `<span class="line" style="background:${esc(lines[x.rbLine].colour)}">${esc(x.rbLine)}</span>` : ""}<b>${esc(x.rbRun)}</b>`;
+          if (x.rbRun) return `${lineBadge(x.rbLine, x.rbKind)}<b>${esc(x.rbRun)}</b>`;
           return t.rb ? `${badge(t)}<b>${esc(t.rb)}</b>` : "";
         };
         const then = trips.some((t) => t.byKey.has(key) && t.byKey.get(key).rbThen);
@@ -740,13 +779,13 @@
         const linked = prev.f && prev.f[0] === t.r && last[0] === first[0];
         if (linked) {
           const join = [first[0], last[1], first[1] + (first[2] || 0) - last[1], first[3] || last[3] || "", ""];
-          join.isJoin = true; join.rbRun = t.r; join.rbLine = t.line; join.kind = first.kind;
+          join.isJoin = true; join.rbRun = t.r; join.rbLine = t.line; join.rbKind = t.c; join.kind = first.kind;
           s[s.length - 1] = join;
           stops.shift();
         } else {
           first.isJoin = true; first.rbRun = t.r; first.rbLine = t.line; first.rbThen = true;
           // the "Then" row goes after the last stop of the one before
-          s[s.length - 1].isJoin = true; s[s.length - 1].rbRun = t.r; s[s.length - 1].rbLine = t.line; s[s.length - 1].rbThen = true;
+          s[s.length - 1].isJoin = true; s[s.length - 1].rbRun = t.r; s[s.length - 1].rbLine = t.line; s[s.length - 1].rbKind = t.c; s[s.length - 1].rbThen = true;
           first.isJoin = false;
         }
       }
@@ -756,12 +795,12 @@
     // headed by the set and the line it runs on in service
     const rev = runs.find((x) => !x.e);
     const t = { ...a, s, h: z.h, f: z.f, t: z.t, o: a.o, round: true, dir: "down", e: rev ? 0 : 1, c: rev ? undefined : a.c,
-                line: rev ? rev.line : a.line };
+                line: rev ? rev.line : a.line, firstRun: a.r, firstLine: a.line, firstKind: a.c };
     t.stops = keyed(t);
     t.byKey = new Map(t.stops.map((x) => [x.key, x]));
     return t;
   }
-  const chainTable = (t, title) => `<h2 class="run-head">${esc(title)}</h2>` +
+  const chainTable = (t, title, set) => (t.chain = set || t.firstRun, `<h2 class="run-head">${esc(title)}</h2>`) +
     table([t], t.stops.filter((x) => x.flag !== "p" || el.pass.checked || x.kind).map((x) => x.key),
       { pass: el.pass.checked, plat: el.plat.checked, changes: [] }, [t]);
 
@@ -806,24 +845,32 @@
       el.table.innerHTML = `<div class="empty">No run ${esc(run)} on ${esc(day)}.</div>`;
       return;
     }
-    // each run's set for the day: everything it's formed by and forms
-    // (intercity runs, N418 on as N423...), and for suburban sets anything
-    // else with the same number that the feed doesn't link (200A ... 200G)
+    // Whole day: each run's set for the day, everything it's formed by and
+    // forms (N418 on as Y629...), plus for suburban sets anything else with
+    // the same number the feed doesn't link. Otherwise just the runs that
+    // match, those that run on into each other chained (200* is 200A ...
+    // 200G in one table; N*** each service on its own unless one forms
+    // another).
     const { next, prev } = linkRuns(all);
     const stem = (r) => (/[A-Z]$/i.test(r) && /\d/.test(r) ? r.slice(0, -1) : r);
-    const day0 = (t) => { let a = t, n = 0; while (prev.has(a) && n++ < 80) a = prev.get(a); return a; };
-    const whole = (a) => { const c = [a]; while (next.has(c[c.length - 1]) && c.length < 80) c.push(next.get(c[c.length - 1])); return c; };
-    const sets = new Map();   // key -> Set of trips
+    const lettered = (r) => /[A-Z]$/i.test(r) && /^\d/.test(r);
+    const pool = el.diag.checked ? null : new Set(found);
+    const ok = (x) => !pool || pool.has(x);
+    const day0 = (t) => { let a = t, n = 0; while (prev.has(a) && ok(prev.get(a)) && n++ < 80) a = prev.get(a); return a; };
+    const whole = (a) => { const c = [a]; while (next.has(c[c.length - 1]) && ok(next.get(c[c.length - 1])) && c.length < 80) c.push(next.get(c[c.length - 1])); return c; };
+    const sets = new Map();
     const keyOf = new Map();
     for (const t of found) {
       const c = whole(day0(t));
-      const lettered = /[A-Z]$/i.test(t.r) && /^\d/.test(t.r);
-      let k = lettered ? "s:" + stem(t.r) : "c:" + c[0].r + "@" + c[0].s[0][1];
+      let k = lettered(t.r) ? "s:" + stem(t.r) : "c:" + c[0].r + "@" + c[0].s[0][1];
       for (const x of c) if (keyOf.has(x)) k = keyOf.get(x);
       if (!sets.has(k)) sets.set(k, new Set());
       for (const x of c) { sets.get(k).add(x); keyOf.set(x, k); }
-      if (lettered) for (const x of all) if (stem(x.r) === stem(t.r) && x.line !== "X" || (stem(x.r) === stem(t.r) && x.e)) {
-        for (const y of whole(day0(x))) { sets.get(k).add(y); keyOf.set(y, k); }
+      if (lettered(t.r)) {
+        for (const x of (pool ? found : all)) {
+          if (stem(x.r) !== stem(t.r) || keyOf.get(x) === k) continue;
+          for (const y of whole(day0(x))) { sets.get(k).add(y); keyOf.set(y, k); }
+        }
       }
     }
     let html = "";
@@ -831,7 +878,8 @@
     list.sort((x, y) => x[0].r.localeCompare(y[0].r, "en", { numeric: true }));
     for (const runs of list) {
       const named = runs.filter((t) => re.test(t.r)).map((t) => t.r);
-      html += chainTable(chainTrip(runs), runs.length > 1 ? `${named.join(", ")}: ${runs.map((t) => t.r).join(", ")}` : runs[0].r);
+      const lab = lettered(runs[0].r) && runs.every((t) => stem(t.r) === stem(runs[0].r)) ? stem(runs[0].r) : named[0] || runs[0].r;
+      html += chainTable(chainTrip(runs), runs.map((t) => t.r).join(", "), lab);
     }
     el.table.innerHTML = html;
   }
@@ -973,7 +1021,7 @@
           runs.push(nx);
         }
         const a = runs[0], z = runs[runs.length - 1];
-        html += chainTable(chainTrip(runs), `${runs.map((t) => t.r).join(", ")}: ${name(a.s[0])} to ${name(z.s[z.s.length - 1])}`)
+        html += chainTable(chainTrip(runs), `${runs.map((t) => t.r).join(", ")}: ${name(a.s[0])} to ${name(z.s[z.s.length - 1])}`, a.r)
           .replace('<h2 class="run-head">', '<h3 class="run-head">').replace("</h2>", "</h3>");
       }
     }
@@ -1081,7 +1129,7 @@
     syncUrl();
     // the Other tools work on a whole day: only the date applies
     const tool = el.line.value.startsWith("k:");
-    for (const e of [el.dir, el.from, el.to, el.sfrom, el.sto, el.pass, el.plat, el.nonrev, el.run]) e.disabled = tool;
+    for (const e of [el.dir, el.from, el.to, el.sfrom, el.sto, el.pass, el.plat, el.nonrev, el.run, el.diag]) e.disabled = tool;
     // a through line names its directions by where trains go (config.js `through`)
     const thr = el.line.value.startsWith("l:") && C.through && C.through[el.line.value.slice(2)];
     el.dir.options[0].text = thr ? thr.labels[0] : "Down";
@@ -1168,6 +1216,25 @@
         const s = corridor ? clip(t.s, corridor, line) : t.s;
         if (!s) continue;
         const trip = { ...t, s, line };
+        // a train running on past the corridor (or in from beyond it) says
+        // where it goes to (comes from)
+        const nm = (x) => HEAD(state.stations[x[0]][0]);
+        if (corridor && s[s.length - 1] !== t.s[t.s.length - 1] && !trip.t) trip.t = nm(t.s[t.s.length - 1]);
+        if (corridor && s[0] !== t.s[0] && !trip.o) trip.o = nm(t.s[0]);
+        // the City Circle run the other way (via Museum) gets rows of its own
+        const sp = cityCircleRows(s);
+        if (sp) trip.split = new Map([...(trip.split || []), ...sp]);
+        // a train through Central mid-run that isn't a through line here (a
+        // CCN via the North Shore from Blacktown): its shorter side gets rows
+        // of its own, so it doesn't run back up the rows its line uses
+        if (!corridor && !(C.through && C.through[line])) {
+          const ce = byName.get(C.throughAt);
+          const at = s.findIndex((x) => x[0] === ce);
+          if (at > 0 && at < s.length - 1 && s.filter((x) => x[0] === ce).length === 1) {
+            const side = at < s.length - 1 - at ? s.slice(0, at) : s.slice(at + 1);
+            trip.split = new Map([...(trip.split || []), ...side.map((x) => [x[0], "~x"])]);
+          }
+        }
         // feeders: trains of the feeder lines, or running only on the far
         // side, that start or end at the interchange (one running through is
         // a main-line train)
@@ -1210,6 +1277,10 @@
     }
     orient(all);
     for (const t of all) if (t.fixDir) t.dir = t.fixDir;   // a City Circle lap goes the way it came in
+    // a lap that starts at Central and heads out after it (Central, the loop,
+    // Central, Redfern) goes the way it heads out, whatever the loop says
+    const ce = byName.get(C.throughAt);
+    for (const t of all) if (!t.rb && t.s[0][0] === ce && t.s.some((x, i) => i > 1 && x[0] === ce)) t.dir = t.d;
     const trips = [];
     for (const t of all) {
       if (t.dir !== el.dir.value) continue;
@@ -1242,6 +1313,16 @@
       for (const k of own) move(k.replace(/~\d+$/, ""), mk, before);
     }
     const branch = branches(master, trips.filter((t) => !t.e));
+    // an empty run whose way through the stations doesn't follow the
+    // timetable's order (an inspection train doubling back) keeps only the
+    // timing points that do, so its times always read down the page
+    const rowAt = new Map(master.map((k, i) => [k, i]));
+    for (const t of trips) {
+      if (!t.e) continue;
+      let at = -1;
+      t.stops = t.stops.filter((x) => { const i = rowAt.get(x.key); if (i === undefined || i <= at) return false; at = i; return true; });
+      t.byKey = new Map(t.stops.map((x) => [x.key, x]));
+    }
     let used = master.filter((k) => trips.some((t) => {
       const s = t.byKey.get(k);
       return s && (s.flag !== "p" || el.pass.checked);
@@ -1343,7 +1424,7 @@
     const ymd = (s) => dmy(new Date(`${s}T12:00:00+10:00`));
     el.updated.textContent = `Timetable as at ${dmy(built)} for period ${ymd(state.index.first)} - ${ymd(state.index.last)}`;
     for (const e of [el.line, el.dir]) e.addEventListener("change", () => { el.sfrom.value = ""; el.sto.value = ""; el.sfrom.innerHTML = ""; el.sto.innerHTML = ""; render(); });
-    for (const e of [el.date, el.from, el.to, el.sfrom, el.sto, el.pass, el.plat, el.nonrev, el.run]) e.addEventListener("change", render);
+    for (const e of [el.date, el.from, el.to, el.sfrom, el.sto, el.pass, el.plat, el.nonrev, el.run, el.diag]) e.addEventListener("change", render);
     // highlight the column under the pointer, as rows are in CSS
     let hovered = -1;
     const mark = (i) => {
