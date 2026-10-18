@@ -763,6 +763,23 @@
     table([t], t.stops.filter((x) => x.flag !== "p" || el.pass.checked || x.kind).map((x) => x.key),
       { pass: el.pass.checked, plat: el.plat.checked, changes: [] }, [t]);
 
+  // What each run forms that day: the run it names, leaving where this one
+  // ends (empty runs into sidings the feed doesn't list can start
+  // elsewhere), soonest after. next: trip -> trip, prev: trip -> trip.
+  function linkRuns(all) {
+    const byRun = new Map();
+    for (const t of all) { if (!byRun.has(t.r)) byRun.set(t.r, []); byRun.get(t.r).push(t); }
+    const next = new Map(), prev = new Map();
+    for (const t of [...all].sort((a, b) => a.s[a.s.length - 1][1] - b.s[b.s.length - 1][1])) {
+      if (!t.f) continue;
+      const end = t.s[t.s.length - 1][0], at = t.s[t.s.length - 1][1];
+      const n = (byRun.get(t.f[0]) || []).filter((x) => x !== t && !prev.has(x) && x.s[0][1] >= at - 60)
+        .sort((x, y) => (x.s[0][0] !== end) - (y.s[0][0] !== end) || x.s[0][1] - y.s[0][1])[0];
+      if (n) { next.set(t, n); prev.set(n, t); }
+    }
+    return { next, prev };
+  }
+
   // The Run box: every line that day, non-revenue included. * stands for one
   // character: 200* is 200A, 200B...; *360 is N360, W360...; 2*** every
   // 2xx set. Each set (run number without its letter) is one table, its
@@ -772,10 +789,11 @@
     const re = new RegExp("^" + run.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".") + "$", "i");
     el.table.innerHTML = '<div class="empty">Loading…</div>';
     state.arrows = null;
-    let found = [];
+    let found = [], all = [];
     try {
       const files = await Promise.all(codes.map(async (c) => [c, await getJSON(`lines/${encodeURIComponent(c)}/${state.index.lines[c].dates[day]}.json`)]));
-      for (const [c, f] of files) for (const t of f.trips) if (re.test(t.r)) found.push({ ...t, line: c, e: c === "X" ? 1 : 0 });
+      for (const [c, f] of files) for (const t of f.trips) all.push({ ...t, line: c, e: c === "X" ? 1 : 0 });
+      found = all.filter((t) => re.test(t.r));
     } catch (e) {
       if (id === renderId) el.table.innerHTML = `<div class="empty">Couldn't load the timetable (${esc(e.message)}).</div>`;
       return;
@@ -786,18 +804,32 @@
       el.table.innerHTML = `<div class="empty">No run ${esc(run)} on ${esc(day)}.</div>`;
       return;
     }
+    // each run's set for the day: everything it's formed by and forms
+    // (intercity runs, N418 on as N423...), and for suburban sets anything
+    // else with the same number that the feed doesn't link (200A ... 200G)
+    const { next, prev } = linkRuns(all);
     const stem = (r) => (/[A-Z]$/i.test(r) && /\d/.test(r) ? r.slice(0, -1) : r);
-    const sets = new Map();
+    const day0 = (t) => { let a = t, n = 0; while (prev.has(a) && n++ < 80) a = prev.get(a); return a; };
+    const whole = (a) => { const c = [a]; while (next.has(c[c.length - 1]) && c.length < 80) c.push(next.get(c[c.length - 1])); return c; };
+    const sets = new Map();   // key -> Set of trips
+    const keyOf = new Map();
     for (const t of found) {
-      const k = stem(t.r);
-      if (!sets.has(k)) sets.set(k, []);
-      sets.get(k).push(t);
+      const c = whole(day0(t));
+      const lettered = /[A-Z]$/i.test(t.r) && /^\d/.test(t.r);
+      let k = lettered ? "s:" + stem(t.r) : "c:" + c[0].r + "@" + c[0].s[0][1];
+      for (const x of c) if (keyOf.has(x)) k = keyOf.get(x);
+      if (!sets.has(k)) sets.set(k, new Set());
+      for (const x of c) { sets.get(k).add(x); keyOf.set(x, k); }
+      if (lettered) for (const x of all) if (stem(x.r) === stem(t.r) && x.line !== "X" || (stem(x.r) === stem(t.r) && x.e)) {
+        for (const y of whole(day0(x))) { sets.get(k).add(y); keyOf.set(y, k); }
+      }
     }
     let html = "";
-    for (const [k, runs] of [...sets].sort((x, y) => x[0].localeCompare(y[0], "en", { numeric: true }))) {
-      runs.sort((x, y) => x.s[0][1] - y.s[0][1]);
-      const title = runs.length > 1 ? `${k}: ${runs.map((t) => t.r).join(", ")}` : runs[0].r;
-      html += chainTable(chainTrip(runs), title);
+    const list = [...sets.values()].map((set) => [...set].sort((x, y) => x.s[0][1] - y.s[0][1]));
+    list.sort((x, y) => x[0].r.localeCompare(y[0].r, "en", { numeric: true }));
+    for (const runs of list) {
+      const named = runs.filter((t) => re.test(t.r)).map((t) => t.r);
+      html += chainTable(chainTrip(runs), runs.length > 1 ? `${named.join(", ")}: ${runs.map((t) => t.r).join(", ")}` : runs[0].r);
     }
     el.table.innerHTML = html;
   }
@@ -828,19 +860,8 @@
       if (t.c === "mtpv" || t.c === "special" || t.c === "charter") continue;
       all.push({ ...t, line: c, start: t.s[0][1], end: t.s[t.s.length - 1][1] });
     }
-    const byRun = new Map();
-    for (const t of all) { if (!byRun.has(t.r)) byRun.set(t.r, []); byRun.get(t.r).push(t); }
-    // what each forms: that run, leaving where this one ends, soonest after
-    const next = new Map(), hasPrev = new Set();
-    for (const t of all) {
-      if (!t.f) continue;
-      const end = t.s[t.s.length - 1][0];
-      // (the same place where it can be; empty runs into sidings the feed
-      // doesn't list can start elsewhere)
-      const n = (byRun.get(t.f[0]) || []).filter((x) => x !== t && !hasPrev.has(x) && x.start >= t.end - 60)
-        .sort((x, y) => (x.s[0][0] !== end) - (y.s[0][0] !== end) || x.start - y.start)[0];
-      if (n) { next.set(t, n); hasPrev.add(n); }
-    }
+    const { next, prev } = linkRuns(all);
+    const hasPrev = new Set(prev.keys());
     const chains = [];
     for (const t of all) {
       if (hasPrev.has(t)) continue;

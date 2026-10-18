@@ -127,7 +127,7 @@ def link_workings(workings, span) -> dict:
     pattern for suburban runs."""
     by_block = defaultdict(list)
     by_run = defaultdict(list)
-    for tid, (run, block, days) in workings.items():
+    for tid, (run, block, days, _cat) in workings.items():
         if tid not in span:
             continue
         for d in days:
@@ -153,6 +153,28 @@ def link_workings(workings, span) -> dict:
                 n = by_suffix.get(LETTERS[LETTERS.index(suffix) + 1])
                 if n and span[n][0] >= span[t][1] and out.get((t, d), [None, None])[1] is None:
                     link(t, n, d)
+    # still unlinked (intercity runs on weekdays often have no block): a
+    # train ending somewhere is the same set as the next train of the same
+    # stock starting there, within a few hours
+    ends = defaultdict(list)
+    starts = defaultdict(list)
+    for tid, (run, block, days, cat) in workings.items():
+        if tid not in span or not cat or run[-1:].isalpha() and run[:1].isdigit():
+            continue
+        e = span[tid]
+        for d in days:
+            if out.get((tid, d), [None, None])[1] is None:
+                ends[(d, e[4], cat)].append(tid)
+            if out.get((tid, d), [None, None])[0] is None:
+                starts[(d, e[3], cat)].append(tid)
+    for key, tids in ends.items():
+        free = sorted(starts.get(key, []), key=lambda t: span[t][0])
+        for a in sorted(tids, key=lambda t: span[t][1]):
+            for b in free:
+                if b != a and 0 <= span[b][0] - span[a][1] <= 4 * 3600:
+                    link(a, b, key[0])
+                    free.remove(b)
+                    break
     return {k: tuple(v) for k, v in out.items()}
 
 
@@ -182,14 +204,15 @@ def build(gtfs: Path, out: Path, today: date | None = None):
     lines: dict[str, dict] = {}
     trip_meta = {}
     ecs_meta = {}
-    workings = {}  # every trip, empty ones too, for "formed by" / "forms": tid -> (run, block, days)
+    workings = {}  # every trip, empty ones too, for "formed by" / "forms": tid -> (run, block, days, stock)
     for t in rows(z, "trips.txt"):
         r = routes.get(t["route_id"])
         line = (r or {}).get("route_short_name", "").strip()
         days = {d for d in dates_of.get(t["service_id"], ()) if d >= today}
         if not days:
             continue
-        workings[t["trip_id"]] = (t["trip_id"].split(".")[0], (t.get("block_id") or "").strip(), days)
+        workings[t["trip_id"]] = (t["trip_id"].split(".")[0], (t.get("block_id") or "").strip(), days,
+                                  t.get("vehicle_category_id", ""))
         # outside the public timetable: kept apart and shown only on request
         cat = non_revenue(line, t, sets)
         if cat:
@@ -211,8 +234,12 @@ def build(gtfs: Path, out: Path, today: date | None = None):
             a, d = st["arrival_time"] or st["departure_time"], st["departure_time"] or st["arrival_time"]
             if not a:
                 continue
-            e = span.setdefault(tid, [secs(d), secs(a), False])
-            e[0], e[1] = min(e[0], secs(d)), max(e[1], secs(a))
+            here = stop_station.get(st["stop_id"])
+            e = span.setdefault(tid, [secs(d), secs(a), False, here, here])
+            if secs(d) < e[0]:
+                e[0], e[3] = secs(d), here
+            if secs(a) >= e[1]:
+                e[1], e[4] = secs(a), here
             e[2] = e[2] or st["pickup_type"] != "1"
     links = link_workings(workings, span)
 
