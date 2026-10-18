@@ -803,8 +803,7 @@
   // doesn't count as out).
   async function renderFleet(day, id) {
     state.arrows = null;
-    el.note.textContent = "Worked out from the GTFS: each set's runs linked by what each forms, and a set ending somewhere taking the next unlinked set's day starting there later. Sets joined or split along the way count as listed; spares and sets under maintenance aren't included.";
-    el.note.hidden = false;
+    el.note.hidden = true;
     const codes = Object.keys(state.index.lines).filter((c) => state.index.lines[c].dates[day]);
     if (!codes.length) { el.table.innerHTML = `<div class="empty">No trains on ${esc(day)}.</div>`; return; }
     el.table.innerHTML = '<div class="empty">Loading…</div>';
@@ -887,14 +886,19 @@
     };
     const rows = [...stats.values()].map((st) => ({ ...st, used: needed(st.chains), peak: peak(st.events) }))
       .sort((a, b) => (sets[a.v] || a.v).localeCompare(sets[b.v] || b.v, "en", { numeric: true }));
-    const [tp, ta] = peak(events);
-    const total = (k) => rows.reduce((n, r) => n + k(r), 0);
-    el.table.innerHTML = `<div class="tt-scroll fleet"><table class="tt"><thead><tr><th class="stn">Stock</th>` +
-      `<th>Sets needed</th><th>Out at once, at most</th><th>When</th><th>Cars out at once</th></tr></thead><tbody>` +
-      rows.map((r) => `<tr><th class="stn">${esc(sets[r.v] || r.v)} <span class="role">${esc(r.v)}</span></th>` +
-        `<td>${r.used}</td><td>${r.peak[0]}</td><td>${hhmm(r.peak[1])}</td><td>${r.peak[0] * cars(r.v) || ""}</td></tr>`).join("") +
-      `</tbody><tfoot><tr><th class="stn">All</th><td>${total((r) => r.used)}</td>` +
-      `<td>${tp}</td><td>${hhmm(ta)}</td><td>${total((r) => r.peak[0] * cars(r.v))}</td></tr></tfoot></table></div>`;
+    // cars of each type the day needs: sets needed x cars in the formation,
+    // by fleet; an XPT (7X) is five cars between two power cars
+    const fleet = new Map();
+    const addCars = (name, n) => fleet.set(name, (fleet.get(name) || 0) + n);
+    for (const r of rows) {
+      const n = cars(r.v), name = String(sets[r.v] || r.v).replace(/^\d+\s*car\s+/i, "");
+      if (/^X\d/.test(r.v)) { addCars("XPT power car", 2 * r.used); addCars("XPT car", (n - 2) * r.used); }
+      else addCars(name, n * r.used);
+    }
+    const list = [...fleet].sort((a, b) => a[0].localeCompare(b[0]));
+    el.table.innerHTML = `<div class="tt-scroll fleet"><table class="tt"><thead><tr><th class="stn">Cars</th><th></th></tr></thead><tbody>` +
+      list.map(([name, n]) => `<tr><th class="stn">${esc(name)}</th><td>${n}</td></tr>`).join("") +
+      `</tbody><tfoot><tr><th class="stn">All</th><td>${list.reduce((t, [, n]) => t + n, 0)}</td></tr></tfoot></table></div>`;
   }
 
   // Freight & inspection: every track machine, light engine and test train
