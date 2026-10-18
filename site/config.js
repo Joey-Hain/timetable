@@ -55,12 +55,17 @@ window.TT_CONFIG = {
   //   express: an express / all-stations change: the all-stations trains
   //            call at some of these stations, the expresses at none; only
   //            all-stations trains starting or ending at one of `locals`.
+  //   only:    both trains must be on these lines (no change to a booked
+  //            regional train)
   interchanges: [
     { at: "Hamilton", lines: ["HUN", "CCN"], feeders: ["HUN"], split: ["Hamilton", "Newcastle Interchange"] },
     { at: "Thirroul", lines: ["SCO"], locals: ["Thirroul", "Waterfall"],
       express: ["Bulli", "Woonona", "Bellambi", "Corrimal", "Towradgi", "Fairy Meadow"] },
     { at: "Kiama", lines: ["SCO"], split: ["Kiama"], side: ["Gerringong", "Berry", "Bomaderry (Nowra)"] },
     { at: "Campbelltown", atUp: "Macarthur", lines: ["SHL", "T8"], feeders: ["SHL"], split: ["Campbelltown", "Macarthur"] },
+    { at: "Moss Vale", lines: ["SHL"], only: ["SHL"], split: ["Moss Vale"],
+      side: ["Exeter", "Bundanoon", "Penrose", "Wingello", "Tallong", "Marulan", "Goulburn"] },
+    { at: "Lithgow", lines: ["BMT"], only: ["BMT"], split: ["Lithgow"], side: ["Rydal", "Tarana", "Bathurst"] },
     { at: "Lidcombe", feeders: ["T6", "T7"], split: ["Lidcombe"] },
   ],
 };

@@ -349,11 +349,14 @@
     }
     const gap = (ix.minutes ?? 2) * 60, most = (ix.maxMinutes ?? 30) * 60;
     const calls = (t, k) => { const x = t.byKey.get(k); return x && x.flag !== "p" ? x : null; };
-    const prim = trips.filter((t) => !isSecondary(t) && calls(t, mk));
+    // ix.only: both trains on these lines (no change into a regional train,
+    // which has to be booked)
+    const ok = (t) => !ix.only || ix.only.includes(t.line);
+    const prim = trips.filter((t) => ok(t) && !isSecondary(t) && calls(t, mk));
     const cells = new Map(), pairs = new Map();
     const add = (t, html) => cells.set(t, (cells.get(t) ? cells.get(t) + "<br>" : "") + html);
     for (const t of trips) {
-      const s = isSecondary(t) && calls(t, sk);
+      const s = ok(t) && isSecondary(t) && calls(t, sk);
       if (!s) continue;
       // a feeder has to start or end here; one running through is a main-line train
       if (ix.split && !(secondaryFirst ? t.stops[t.stops.length - 1].key === sk || t.stops.slice(-2).some((x) => x.key === sk)
