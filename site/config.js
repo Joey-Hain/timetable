@@ -90,6 +90,8 @@ window.TT_CONFIG = {
                                   "Windsor", "Clarendon", "East Richmond", "Richmond"] },
     { at: "Glenfield", stations: ["Edmondson Park", "Leppington"] },
     { at: "Regents Park", stations: ["Birrong", "Yagoona", "Bankstown"] },
+    // T8 via Sydenham, against the Airport line
+    { at: "Central Electric", stations: ["Redfern", "Erskineville", "St Peters", "Sydenham"], views: ["l:T8", "c:south"] },
     { at: "Lidcombe", stations: ["Olympic Park"] },
     // the Eastern Suburbs Railway off Redfern, in the corridor only (T4 on its
     // own runs Bondi Junction to Waterfall)

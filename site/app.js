@@ -327,6 +327,16 @@
       }
       if (out || back) forced.push({ keys, j });
     }
+    // a part of Central trains only start from (or only finish at) goes at
+    // the top (or the bottom), not stuck after a branch (Sydney Terminal in
+    // the South corridor)
+    const has = (pre, k) => [...goes].some((g) => (pre ? g.endsWith(">" + k) : g.startsWith(k + ">")));
+    for (const k of [...master]) {
+      if (!/^(Sydney Terminal|Central Electric|Central ESR)$/.test(state.stations[Number(k.split("#")[0])][0])) continue;
+      const i = master.indexOf(k);
+      if (!has(true, k) && i > 0 && forced.some((g) => g.keys.includes(master[i - 1]))) { master.splice(i, 1); master.unshift(k); }
+      else if (!has(false, k) && i < master.length - 1 && forced.some((g) => g.keys.includes(master[i + 1]))) { master.splice(i, 1); master.push(k); }
+    }
     return depths(master, trips, forced);
   }
 
