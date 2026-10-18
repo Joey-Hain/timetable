@@ -14,7 +14,8 @@
 
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const pad = (n) => String(n).padStart(2, "0");
-  const hhmm = (t) => `${pad(Math.floor(t / 3600) % 24)}:${pad(Math.floor(t / 60) % 60)}`;
+  // past midnight the service day carries on: 24:10, 25:30 (as railways count it)
+  const hhmm = (t) => `${pad(Math.floor(t / 3600))}:${pad(Math.floor(t / 60) % 60)}`;
   const hhmmss = (t) => `${hhmm(t)}:${pad(t % 60)}`;
 
   async function getJSON(path) {
@@ -56,7 +57,7 @@
         .join("");
     const hours = [];
     for (let h = 0; h <= 28; h++) hours.push(h);
-    const hl = (h) => (h >= 24 ? `${pad(h - 24)}:00 next day` : `${pad(h)}:00`);
+    const hl = (h) => `${pad(h)}:00`;
     el.from.innerHTML = hours.slice(0, 24).map((h) => opt(h, hl(h))).join("");
     el.to.innerHTML = hours.slice(1).map((h) => opt(h, h === 28 ? "End of service" : hl(h))).join("");
     el.to.value = "28";
