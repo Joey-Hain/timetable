@@ -6,7 +6,7 @@
   const el = {
     line: $("line"), date: $("date"), dir: $("dir"), from: $("from"), to: $("to"),
     sfrom: $("sfrom"), sto: $("sto"),
-    pass: $("pass"), plat: $("plat"), nonrev: $("nonrev"), run: $("run"), keyNr: $("key-nr"),
+    pass: $("pass"), plat: $("plat"), nonrev: $("nonrev"), run: $("run"),
     note: $("note"), table: $("table"), updated: $("updated"),
   };
   const state = { index: null, stations: null, files: new Map() };
@@ -527,7 +527,6 @@
     }
     if (id !== renderId) return;
     el.note.hidden = true;
-    el.keyNr.hidden = !(found && found.e);
     if (!found) {
       el.table.innerHTML = `<div class="empty">No run ${esc(run)} on ${esc(day)}.</div>`;
       return;
@@ -611,7 +610,6 @@
     // non-revenue trains (the option): each one's longest stretch through
     // stations the timetable already has
     const X = state.index.lines.X;
-    el.keyNr.hidden = !el.nonrev.checked;
     if (el.nonrev.checked && X && X.dates[day]) {
       const shown = new Set(all.flatMap((t) => t.s.map((x) => x[0])));
       const ecs = await getJSON(`lines/X/${X.dates[day]}.json`);
@@ -718,6 +716,20 @@
     el.updated.textContent = `Timetable as at ${dmy(built)} for period ${ymd(state.index.first)} - ${ymd(state.index.last)}`;
     for (const e of [el.line, el.dir]) e.addEventListener("change", () => { el.sfrom.value = ""; el.sto.value = ""; el.sfrom.innerHTML = ""; el.sto.innerHTML = ""; render(); });
     for (const e of [el.date, el.from, el.to, el.sfrom, el.sto, el.pass, el.plat, el.nonrev, el.run]) e.addEventListener("change", render);
+    // highlight the column under the pointer, as rows are in CSS
+    let hovered = -1;
+    const mark = (i) => {
+      if (i === hovered && (i < 1 || el.table.querySelector(".col-hover"))) return;  // same column, table not redrawn
+      for (const c of el.table.querySelectorAll(".col-hover")) c.classList.remove("col-hover");
+      hovered = i;
+      if (i < 1) return;
+      for (const row of el.table.querySelectorAll(".tt tr")) row.cells[i] && row.cells[i].classList.add("col-hover");
+    };
+    el.table.addEventListener("mouseover", (e) => {
+      const c = e.target.closest("td, th");
+      mark(c && c.closest(".tt") ? c.cellIndex : -1);
+    });
+    el.table.addEventListener("mouseleave", () => mark(-1));
     render();
   }
 
