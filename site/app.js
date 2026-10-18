@@ -263,14 +263,15 @@
     const sets = state.index.sets || {};
     // set type number first (8B, not B8, which reads like a line)
     const set = (v) => String(v || "").replace(/^([A-Za-z]+)(\d+)$/, "$2$1");
-    const working = (w, word) => (w ? `<span class="work">${word} ${esc(w[0])}${w[1] ? "" : " (empty)"}</span>` : "");
+    const working = (w) => (w ? esc(w[0]) + (w[1] ? "" : '<span class="work"> empty</span>') : "");
     let h = '<div class="tt-scroll"><table class="tt"><thead><tr><th class="stn"></th>';
     h += trips.map((t) =>
       `<th><span class="head">${esc(t.h)}</span>` +
       `<span class="line" style="background:${esc(lines[t.line].colour)}">${esc(t.line)}</span>` +
       `<span class="run">${esc(t.r)}</span><span class="set" title="${esc(sets[t.v] || "")}">${esc(set(t.v))}</span>` +
-      `${working(t.b, "from")}</th>`).join("");
-    h += "</tr></thead><tbody>";
+      `</th>`).join("");
+    h += '</tr></thead><tbody><tr class="worked"><th class="stn">Formed by</th>' +
+      trips.map((t) => `<td>${working(t.b)}</td>`).join("") + "</tr>";
     // a rule above a station no train reaches straight from the one listed
     // before it: the start of another branch
     const next = new Set();
@@ -285,7 +286,7 @@
       h += `<tr${gap}><th class="stn">${esc(names[st][0])}</th>` + trips.map((t) => cell(t.byKey.get(key), opts)).join("") + "</tr>";
     });
     h += '</tbody><tfoot><tr><th class="stn">Forms</th>' + trips.map((t) =>
-      `<td>${t.f ? esc(t.f[0]) + (t.f[1] ? "" : '<span class="work"> empty</span>') : ""}</td>`).join("") + "</tr></tfoot>";
+      `<td>${working(t.f)}</td>`).join("") + "</tr></tfoot>";
     return h + "</table></div>";
   }
 
