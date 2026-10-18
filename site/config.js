@@ -41,7 +41,7 @@ window.TT_CONFIG = {
       exclude: [...NORTH_SHORE, ...HORNSBY_BEROWRA, ...T5_SOUTH] },
     { id: "newcastle", name: "Central Coast & Hunter", lines: ["CCN", "HUN", "NRC", "NRW"],
       exclude: [...NORTH_SHORE, ...MAIN_WEST], dropVia: ["Chatswood"] },
-    { id: "innerwest", name: "Inner West & Old South", lines: ["T2", "T3", "T6", "T7", "T1", "BMT"],
+    { id: "innerwest", name: "Inner West & Old South", lines: ["T2", "T3", "T6", "T1", "BMT"],
       lineStations: { T1: WEST_INNER, BMT: WEST_INNER } },
     { id: "south", name: "East Hills & Southern Highlands", lines: ["T8", "SHL", "STH"] },
   ],
@@ -112,6 +112,9 @@ window.TT_CONFIG = {
   // via the North Shore on as T1 to Blacktown); everywhere a lap of the City
   // Circle joins the train it follows. "Continues as" gives the new run, with
   // the new line or CC when that changes.
+  // A shuttle's round trip shown as one service in its own timetable, with
+  // "Continues as" at the far end (T7 Lidcombe - Olympic Park - Lidcombe)
+  rounds: { T7: "Olympic Park" },
   throughAt: "Central Electric",
   throughLines: ["T1", "T2", "T3", "T8", "T9", "CCN"],
   cityCircle: ["Town Hall", "Wynyard", "Circular Quay", "St James", "Museum"],

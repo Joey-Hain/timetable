@@ -118,16 +118,17 @@
     for (const [st] of trip.s) total.set(st, (total.get(st) || 0) + 1);
     const seen = new Map();
     const split = trip.split || new Map();
-    return trip.s.map(([st, arr, dwell = 0, plat = "", flag = ""], i) => {
+    return trip.s.map((stop, i) => {
+      let [st, arr, dwell = 0, plat = "", flag = ""] = stop;
       const k = (seen.get(st) || 0) + 1;
       seen.set(st, k);
-      const n = trip.dir === "down" ? total.get(st) - k + 1 : k;
+      const n = trip.dir === "down" && !trip.round ? total.get(st) - k + 1 : k;
       const last = i === trip.s.length - 1;
       // picking up only at the start / setting down only at the end goes without saying
       if ((i === 0 && flag === "u") || (last && flag === "d")) flag = "";
       const base = `${st}#${n}`;
       return { key: base + (split.get(st) || ""), base, st, arr, dep: arr + dwell,
-               t: last || flag === "p" ? arr : arr + dwell, plat, flag, last, first: i === 0 };
+               t: last || flag === "p" ? arr : arr + dwell, plat, flag, last, first: i === 0, join: !!stop.isJoin };
     });
   }
 
@@ -253,6 +254,7 @@
       if (!onward && mine.has(b)) used.add(b);
       const first = b.s[0];
       const join = [at, last[1], first[1] + (first[2] || 0) - last[1], first[3] || last[3] || "", ""];
+      join.isJoin = true;   // where "Continues as" goes
       out.push({ ...a, s: [...a.s.slice(0, -1), join, ...part.slice(1)],
                  h: loop ? a.h : finalHead(a, b), f: onward ? null : b.f,
                  t: onward ? state.stations[b.s[b.s.length - 1][0]][0] : b.t,
@@ -261,6 +263,26 @@
                  fixDir: loop ? a.d : undefined });
     }
     for (const t of trips) if (!used.has(t)) out.push(t);
+    return out;
+  }
+
+  // A shuttle's round trip as one service (config.js `rounds`: T7 Lidcombe -
+  // Olympic Park - Lidcombe), "Continues as" at the far end, all one way
+  function joinRounds(trips, at) {
+    const byRun = new Map(trips.map((t) => [t.r, t]));
+    const used = new Set(), out = [];
+    for (const a of trips) {
+      if (used.has(a)) continue;
+      const last = a.s[a.s.length - 1];
+      const b = a.f && a.f[1] ? byRun.get(a.f[0]) : null;
+      if (!b || used.has(b) || last[0] !== at || b.s[0][0] !== at || b.s[0][1] < last[1]) continue;
+      used.add(a); used.add(b);
+      const first = b.s[0];
+      const join = [at, last[1], first[1] + (first[2] || 0) - last[1], first[3] || last[3] || "", ""];
+      join.isJoin = true;
+      out.push({ ...a, s: [...a.s.slice(0, -1), join, ...b.s.slice(1)], h: b.h, f: b.f, rb: b.r, fixDir: "down", round: true });
+    }
+    for (const t of trips) if (!used.has(t)) out.push({ ...t, fixDir: "down", round: true });
     return out;
   }
 
@@ -288,7 +310,7 @@
   // it coming in, with the main line carrying on after them. Moves them in
   // `master` and returns them, to indent.
   function branches(master, trips) {
-    const marked = new Set();
+    const forced = [];
     const goes = new Set();
     for (const t of trips) t.stops.forEach((x, i) => { if (i) goes.add(t.stops[i - 1].key + ">" + x.key); });
     for (const br of C.branches || []) {
@@ -302,9 +324,107 @@
         for (const k of keys) master.splice(master.indexOf(k), 1);
         master.splice(master.indexOf(j) + (out ? 1 : 0), 0, ...keys);
       }
-      keys.forEach((k) => marked.add(k));
+      if (out || back) forced.push({ keys, j });
     }
-    return marked;
+    return depths(master, trips, forced);
+  }
+
+  // How far each station is off the line's main route, for the indent. The
+  // main route is the busiest long stopping pattern; every other pattern's
+  // new stations hang off where they leave it. At a junction where the main
+  // route carries on they go one deeper (Harris Park - Parramatta off
+  // Granville on T2; Bankstown off Regents Park, itself off Lidcombe, in the
+  // Inner West); where it doesn't, they just carry the line on (Leppington on
+  // T2 alone). A main route that only goes on a station or two to a dead end
+  // swaps with the longer way (Newcastle Interchange off Hamilton, the Hunter
+  // carrying on). Configured branches (config.js) always count as branches
+  // where the line really splits there.
+  function depths(master, trips, groups) {
+    const inMaster = new Set(master);
+    const succ = new Map(), pred = new Map();
+    const add = (m, a, b) => { if (!m.has(a)) m.set(a, new Set()); m.get(a).add(b); };
+    const pats = new Map();
+    const local = trips.filter((t) => state.index.lines[t.line].network !== "regional");
+    for (const t of (local.length ? local : trips)) {
+      const ks = t.stops.map((x) => x.key).filter((k) => inMaster.has(k));
+      for (let i = 1; i < ks.length; i++) { add(succ, ks[i - 1], ks[i]); add(pred, ks[i], ks[i - 1]); }
+      const id = ks.join(",");
+      pats.set(id, { ks, line: t.line, n: ((pats.get(id) || {}).n || 0) + 1 });
+    }
+    const many = (m, k) => (m.get(k) || new Set()).size > 1;
+    // configured branches, where their junction is a junction here
+    const forced = new Set();
+    const active = groups.filter(({ keys, j }) => many(succ, j) || many(pred, j));
+    for (const g of active) g.keys.forEach((k) => forced.add(k));
+    // Central's parts (Sydney Terminal, Central Electric) are never a branch
+    const central = (k) => /^(Sydney Terminal|Central Electric|Central ESR)$/.test(state.stations[Number(k.split("#")[0])][0]);
+    const order = [...pats.values()].sort((x, y) => y.n * y.ks.length ** 2 - x.n * x.ks.length ** 2);
+    const spine = order.find((p) => !p.ks.some((k) => forced.has(k))) || order[0];
+    order.sort((x, y) => (x === spine ? -1 : y === spine ? 1 : y.ks.length - x.ks.length || y.n - x.n));
+    // a station the main route runs past without a time (Waterfall for South
+    // Coast expresses) is on it, not a branch
+    const coords = (k) => state.stations[Number(k.split("#")[0])];
+    const apart = (a, b) => {
+      const [, la, oa] = coords(a), [, lb, ob] = coords(b);
+      return 111.2 * Math.hypot((oa - ob) * Math.cos((la * Math.PI) / 180), la - lb);
+    };
+    const edges = spine ? spine.ks.slice(1).map((k, i) => [spine.ks[i], k]) : [];
+    const onSpine = (k) => edges.some(([a, b]) => apart(a, k) + apart(k, b) < 1.15 * apart(a, b));
+    const depth = new Map();
+    if (!spine) return depth;
+    spine.ks.forEach((k) => depth.set(k, 0));
+    // the way the main route goes on from j (same depth) as far as a dead end;
+    // null if it goes on for good, undefined if it doesn't go on another way
+    const chain = (j, not, next) => {
+      const d = depth.get(j);
+      let m = [...(next.get(j) || [])].find((x) => x !== not && depth.get(x) === d && !forced.has(x));
+      if (!m) return undefined;
+      const out = [];
+      while (m && out.length < 60) {
+        out.push(m);
+        const on = [...(next.get(m) || [])].filter((x) => depth.has(x));
+        if (on.length !== 1 || on.some((x) => depth.get(x) !== d)) return on.length ? null : out;
+        m = on[0];
+      }
+      return null;
+    };
+    const hang = (run, j, next, rejoin) => {
+      const d = depth.get(j);
+      let rd = d;
+      if (rejoin) {
+        // a way round that comes back to the main route: a branch only if
+        // it's another line and the main route has stations in between
+        // (T3 Sefton - Carramar in the Inner West; not T8 via Sydenham)
+        if (rejoin.other && !(next.get(j) || new Set()).has(rejoin.k)) rd = d + 1;
+      } else {
+        const main = chain(j, run[0], next);
+        if (main !== undefined) {
+          if (main && main.length === 1 && main.length < run.length) main.forEach((k) => { if (!central(k)) depth.set(k, d + 1); });
+          else if (!(run.length <= 2 && run.every(onSpine))) rd = d + 1;
+        }
+      }
+      for (const k of run) depth.set(k, forced.has(k) ? Math.max(rd, d + 1) : central(k) ? d : rd);
+    };
+    for (const p of order) {
+      let i = 0;
+      while (i < p.ks.length) {
+        if (depth.has(p.ks[i])) { i++; continue; }
+        let e = i;
+        while (e < p.ks.length && !depth.has(p.ks[e])) e++;
+        const run = p.ks.slice(i, e);
+        if (i > 0 && e < p.ks.length) hang(run, p.ks[i - 1], succ, { k: p.ks[e], other: p.line !== spine.line });
+        else if (i > 0) hang(run, p.ks[i - 1], succ);
+        else if (e < p.ks.length) hang([...run].reverse(), p.ks[e], pred);
+        else run.forEach((k) => depth.set(k, 0));
+        i = e;
+      }
+    }
+    // a configured branch sits one deeper than its junction, all of it
+    for (const g of active) {
+      const d = (depth.get(g.j) || 0) + 1;
+      g.keys.forEach((k) => depth.set(k, d));
+    }
+    return depth;
   }
 
   // The part of a train's run inside a corridor (see config.js), or null.
@@ -454,6 +574,7 @@
       if (!ix.express && !(secondaryFirst ? t.stops.slice(-2) : t.stops.slice(0, 2)).some((x) => x.key === mk)) continue;
       let best = null;
       for (const m of prim) {
+        if (m === t || m.line === t.line) continue;
         const ms = calls(m, mk);
         const wait = secondaryFirst ? ms.dep - s.arr : s.dep - ms.arr;
         if (wait >= gap && wait <= most && (!best || wait < best.wait)) best = { m, wait };
@@ -526,8 +647,11 @@
       `<span class="line" style="background:${esc(t.e ? KIND_COLOUR[t.c] || "#888888" : lines[t.line].colour)}">${esc(t.e ? KIND[t.c] || "Non-revenue" : t.line)}</span>` +
       `<span class="run">${esc(t.r)}</span><span class="set" title="${esc(sets[t.v] || "")}">${esc(set(t.v))}</span>` +
       `</th>`).join("");
+    // a regional train cut to this area: where it came from goes with Formed
+    // by, where it goes on to with Forms
+    const from = (t) => (t.o ? `<span class="work">arrives from ${esc(t.o)}</span>` : "");
     h += '</tr></thead><tbody><tr class="worked"><th class="stn">Formed by</th>' +
-      trips.map((t) => `<td>${working(t.b)}</td>`).join("") + "</tr>";
+      trips.map((t) => `<td>${[working(t.b), from(t)].filter(Boolean).join("<br>")}</td>`).join("") + "</tr>";
     // a rule above a station no train reaches straight from the one listed
     // before it: the start of another branch
     const next = new Set();
@@ -540,7 +664,7 @@
       const st = Number(key.split("#")[0]);
       const gap = i && !next.has(master[i - 1] + ">" + key) ? ' class="gap"' : "";
       const here = (opts.changes || []).filter((c) => c.key === key);
-      const row = (k, role, cls) => `<tr${cls} data-k="${k}"><th class="stn${opts.branch && opts.branch.has(key) ? " branch" : ""}">${esc(names[st][0])}${role ? ` <span class="role">${role}</span>` : ""}</th>` +
+      const row = (k, role, cls) => `<tr${cls} data-k="${k}"><th class="stn${opts.branch && opts.branch.get(key) ? ` branch d${Math.min(3, opts.branch.get(key))}` : ""}">${esc(names[st][0])}${role ? ` <span class="role">${role}</span>` : ""}</th>` +
         trips.map((t) => cell(t.byKey.get(key), opts, t, role)).join("") + "</tr>";
       if (!here.length) h += row(key, "", gap);
       else {
@@ -553,18 +677,17 @@
         h += row(`${key}|dep`, "dep", "");
       }
       // through trains change run number here (T1 at Central Electric)
-      if (key === opts.throughKey && trips.some((t) => t.rb)) {
+      if (trips.some((t) => t.rb && t.byKey.has(key) && t.byKey.get(key).join)) {
         // a change of line shows the new line's code (T9 on as T1); a lap of
         // the City Circle shows CC
         const badge = (t) => t.rbLoop ? '<span class="line cc">CC</span>'
           : t.rbLine && t.rbLine !== t.line ? `<span class="line" style="background:${esc(lines[t.rbLine].colour)}">${esc(t.rbLine)}</span>` : "";
         h += '<tr class="change"><th class="stn">Continues as</th>' + trips.map((t) =>
-          `<td>${t.rb && t.byKey.has(key) ? `${badge(t)}<b>${esc(t.rb)}</b>` : ""}</td>`).join("") + "</tr>";
+          `<td>${t.rb && t.byKey.has(key) && t.byKey.get(key).join ? `${badge(t)}<b>${esc(t.rb)}</b>` : ""}</td>`).join("") + "</tr>";
       }
     });
     // a regional train cut to this area says where it goes on to or came from
-    const beyond = (t) => [t.t && `continues to ${esc(t.t)}`, t.o && `arrives from ${esc(t.o)}`]
-      .filter(Boolean).map((x) => `<span class="work">${x}</span>`).join("<br>");
+    const beyond = (t) => (t.t ? `<span class="work">continues to ${esc(t.t)}</span>` : "");
     h += '</tbody><tfoot><tr><th class="stn">Forms</th>' + trips.map((t) =>
       `<td>${[working(t.f), beyond(t)].filter(Boolean).join("<br>")}</td>`).join("") + "</tr></tfoot>";
     return h + "</table></div>";
@@ -845,6 +968,7 @@
       let list = f.trips.map((t) => ({ ...t, line }));
       if (corridor && C.through && C.through[line]) list = throughHeads(list);
       if (throughLines.includes(line)) list = joinThrough(list, partners, { line, lineView: !corridor });
+      if (!corridor && C.rounds && C.rounds[line]) list = joinRounds(list, byName.get(C.rounds[line]));
       for (const t of list) {
         const s = corridor ? clip(t.s, corridor, line) : t.s;
         if (!s) continue;
