@@ -420,7 +420,8 @@
     const corridor = el.line.value.startsWith("c:") ? C.corridors.find((c) => "c:" + c.id === el.line.value) : null;
     const byName = state.byName;
     // interchanges in view: every line they need is shown
-    const active = (C.interchanges || []).map((ix, n) => ({ ix, n, at: byName.get(ix.at) }))
+    const dir = el.dir.value;
+    const active = (C.interchanges || []).map((ix, n) => ({ ix, n, at: byName.get((dir === "up" ? ix.atUp : ix.atDown) || ix.at) }))
       .filter(({ ix, at }) => at !== undefined && (ix.lines || []).every((l) => codes.includes(l) && !missing.includes(l)));
     const splits = active.filter(({ ix }) => ix.split).map(({ ix, n }) => ({
       ix, suffix: `~${n}`,

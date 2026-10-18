@@ -45,6 +45,8 @@ window.TT_CONFIG = {
   // there's a train to change between. Each pairs a
   // secondary train with the first primary train it meets, allowing `minutes`
   // (default 2) to change and waiting at most `maxMinutes` (default 30).
+  // `atUp` / `atDown` move the change for one direction (SHL: Campbelltown
+  // going south, Macarthur going north).
   //   split:   feeder trains get rows of their own at these stations, so the
   //            timetable reads one way through the change (Dungog - Hamilton,
   //            change, Hamilton - Sydney). Feeders are trains of `feeders`
@@ -60,7 +62,7 @@ window.TT_CONFIG = {
     { at: "Kiama", lines: ["SCO"], split: ["Kiama"], side: ["Gerringong", "Berry", "Bomaderry (Nowra)"] },
     { at: "Sutherland", lines: ["T4"], split: ["Sutherland"],
       side: ["Kirrawee", "Gymea", "Miranda", "Caringbah", "Woolooware", "Cronulla"] },
-    { at: "Campbelltown", lines: ["SHL", "T8"], feeders: ["SHL"], split: ["Campbelltown", "Macarthur"] },
+    { at: "Campbelltown", atUp: "Macarthur", lines: ["SHL", "T8"], feeders: ["SHL"], split: ["Campbelltown", "Macarthur"] },
     { at: "Moss Vale", lines: ["SHL"], split: ["Moss Vale"],
       side: ["Exeter", "Bundanoon", "Penrose", "Wingello", "Tallong", "Marulan", "Goulburn"] },
     { at: "Lithgow", lines: ["BMT"], split: ["Lithgow"], side: ["Rydal", "Tarana", "Bathurst"] },
