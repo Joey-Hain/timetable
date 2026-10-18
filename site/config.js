@@ -11,6 +11,10 @@ const HUNTER = ["Waratah", "Warabrook", "Sandgate", "Hexham", "Tarro", "Beresfie
   "Singleton", "Muswellbrook", "Aberdeen", "Scone"];
 const MAIN_WEST = ["Lidcombe", "Auburn", "Clyde", "Granville", "Harris Park", "Parramatta", "Westmead",
   "Wentworthville", "Pendle Hill", "Toongabbie", "Seven Hills", "Blacktown"];
+// T1 and Blue Mountains trains in the Inner West corridor: Central to Parramatta
+const WEST_INNER = ["Central Electric", "Sydney Terminal", "Redfern", "Macdonaldtown", "Newtown", "Stanmore", "Petersham",
+  "Lewisham", "Summer Hill", "Ashfield", "Croydon", "Burwood", "Strathfield", "Homebush", "Flemington", "Lidcombe",
+  "Auburn", "Clyde", "Granville", "Harris Park", "Parramatta"];
 const T5_SOUTH = ["Macarthur", "Campbelltown", "Merrylands", "Guildford", "Yennora", "Fairfield", "Canley Vale", "Cabramatta",
   "Warwick Farm", "Liverpool", "Casula", "Glenfield", "Edmondson Park", "Leppington"];
 
@@ -22,6 +26,7 @@ window.TT_CONFIG = {
   // they run. Line codes as in the GTFS.
   //   stations: only these stations (a list), or
   //   exclude:  every station but these
+  //   lineStations: a line's own stations, for a line only partly in it
   //   dropVia:  leave out trains that run through one of these stations
   //             between two that are shown (CCN via the North Shore in the
   //             Northern corridor). Otherwise a train that leaves the corridor
@@ -36,7 +41,8 @@ window.TT_CONFIG = {
       exclude: [...NORTH_SHORE, ...HORNSBY_BEROWRA, ...T5_SOUTH] },
     { id: "newcastle", name: "Central Coast & Hunter", lines: ["CCN", "HUN", "NRC", "NRW"],
       exclude: [...NORTH_SHORE, ...MAIN_WEST], dropVia: ["Chatswood"] },
-    { id: "innerwest", name: "Inner West & Bankstown", lines: ["T2", "T3", "T6", "T7"] },
+    { id: "innerwest", name: "Inner West & Old South", lines: ["T2", "T3", "T6", "T7", "T1", "BMT"],
+      lineStations: { T1: WEST_INNER, BMT: WEST_INNER } },
     { id: "south", name: "East Hills & Southern Highlands", lines: ["T8", "SHL", "STH"] },
   ],
 
@@ -91,7 +97,15 @@ window.TT_CONFIG = {
   // train end to end, the new run marked at `at`; `down` is a station only the
   // second half passes, naming that way, and `labels` the two directions.
   through: {
-    T1: { at: "Central Electric", down: "Wynyard", labels: ["Western to North Shore", "North Shore to Western"] },
-    T9: { at: "Central Electric", down: "Wynyard", labels: ["Hornsby to Gordon", "Gordon to Hornsby"] },
+    T1: { down: "Wynyard", labels: ["Western to North Shore", "North Shore to Western"] },
+    T9: { down: "Wynyard", labels: ["Hornsby to Gordon", "Gordon to Hornsby"] },
   },
+  // Where trains run on under a new run number, and the lines that do: in a
+  // line's own timetable a train is one column end to end (T9 on as T1, CCN
+  // via the North Shore on as T1 to Blacktown); everywhere a lap of the City
+  // Circle joins the train it follows. "Continues as" gives the new run, with
+  // the new line or CC when that changes.
+  throughAt: "Central Electric",
+  throughLines: ["T1", "T2", "T3", "T8", "T9", "CCN"],
+  cityCircle: ["Town Hall", "Wynyard", "Circular Quay", "St James", "Museum"],
 };

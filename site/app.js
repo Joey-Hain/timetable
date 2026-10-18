@@ -54,7 +54,8 @@
       [["suburban", "Sydney Trains"], ["intercity", "Intercity"], ["regional", "Regional"]]
         .filter(([k]) => groups[k].length)
         .map(([k, label]) => `<optgroup label="${label}">${groups[k].map((c) => opt("l:" + c, lineLabel(c))).join("")}</optgroup>`)
-        .join("");
+        .join("") +
+      (lines.X ? `<optgroup label="Other">${opt("k:mtpv", "Freight & inspection")}</optgroup>` : "");
     const hours = [];
     for (let h = 0; h <= 28; h++) hours.push(h);
     const hl = (h) => `${pad(h)}:00`;
@@ -82,6 +83,7 @@
   function selectedLines() {
     const [kind, id] = el.line.value.split(":");
     if (kind === "c") return C.corridors.find((c) => c.id === id).lines.filter((l) => state.index.lines[l]);
+    if (kind === "k") return [];
     return [id];
   }
 
@@ -222,20 +224,41 @@
   // A through line (config.js `through`) on its own: each train that runs on
   // through `at` under a new run number becomes one, its second run in `rb`.
   // Joined trains vote on the direction: Down passes `down` after the change.
-  function joinThrough(trips, cfg) {
-    const at = state.byName.get(cfg.at), via = state.byName.get(cfg.down);
-    const byRun = new Map(trips.map((t) => [t.r, t]));
+  function joinThrough(trips, partners, { line, lineView }) {
+    const cfg = C.through && C.through[line];
+    const at = state.byName.get(C.throughAt);
+    const via = cfg && state.byName.get(cfg.down);
+    const loopIds = new Set((C.cityCircle || []).map((name) => state.byName.get(name)));
+    const mine = new Set(trips);
     const used = new Set(), out = [];
     for (const a of trips) {
       if (used.has(a)) continue;
       const last = a.s[a.s.length - 1];
-      const b = a.f && a.f[1] ? byRun.get(a.f[0]) : null;
-      if (!b || used.has(b) || last[0] !== at || b.s[0][0] !== at || b.s[0][1] < last[1]) continue;
-      used.add(a); used.add(b);
+      // the run it forms (run numbers repeat across lines: the one leaving
+      // here soonest after, its own line first)
+      const b = a.f && a.f[1] && last[0] === at ? (partners.get(a.f[0]) || [])
+        .filter((x) => !used.has(x) && x.s[0][0] === at && x.s[0][1] >= last[1])
+        .sort((x, y) => (x.line !== a.line) - (y.line !== a.line) || x.s[0][1] - y.s[0][1])[0] : null;
+      if (!b) continue;
+      // round the City Circle (in any timetable), or on as another run in
+      // a line's own timetable (T1 Western to North Shore, T9 to T1)
+      const loop = b.s.length > 2 && loopIds.has(b.s[1][0]) && b.s.some((x, i) => i > 1 && x[0] === at);
+      if (!loop && !lineView) continue;
+      // a lap that goes on out (Central, the loop, Central, Sydenham) joins
+      // as far as Central and shows where it carries on to
+      const back = loop ? b.s.findIndex((x, i) => i > 0 && x[0] === at) : -1;
+      const part = back > 0 ? b.s.slice(0, back + 1) : b.s;
+      const onward = back > 0 && back < b.s.length - 1;
+      used.add(a);
+      if (!onward && mine.has(b)) used.add(b);
       const first = b.s[0];
       const join = [at, last[1], first[1] + (first[2] || 0) - last[1], first[3] || last[3] || "", ""];
-      out.push({ ...a, s: [...a.s.slice(0, -1), join, ...b.s.slice(1)], h: finalHead(a, b, cfg), f: b.f, rb: b.r,
-                 vote: b.s.some((x) => x[0] === via) ? "down" : "up" });
+      out.push({ ...a, s: [...a.s.slice(0, -1), join, ...part.slice(1)],
+                 h: loop ? a.h : finalHead(a, b), f: onward ? null : b.f,
+                 t: onward ? state.stations[b.s[b.s.length - 1][0]][0] : b.t,
+                 rb: b.r, rbLine: b.line, rbLoop: loop,
+                 vote: !loop && via ? (b.s.some((x) => x[0] === via) ? "down" : "up") : undefined,
+                 fixDir: loop ? a.d : undefined });
     }
     for (const t of trips) if (!used.has(t)) out.push(t);
     return out;
@@ -244,19 +267,19 @@
   // The headboard a through train shows: its own if that already names where
   // it ends up ("Penrith via Gordon"), otherwise where it ends up via the
   // through station ("Hornsby via Central", not "Central")
-  function finalHead(a, b, cfg) {
+  function finalHead(a, b) {
     const end = state.stations[b.s[b.s.length - 1][0]][0];
-    return a.h.startsWith(end) ? a.h : `${end} via ${cfg.via || "Central"}`;
+    return a.h.startsWith(end) ? a.h : `${end} via Central`;
   }
 
   // In a corridor a through line's trains stay as two runs, but the first
   // shows the headboard of where it ends up
-  function throughHeads(trips, cfg) {
-    const at = state.byName.get(cfg.at);
+  function throughHeads(trips) {
+    const at = state.byName.get(C.throughAt);
     const byRun = new Map(trips.map((t) => [t.r, t]));
     return trips.map((a) => {
       const b = a.f && a.f[1] ? byRun.get(a.f[0]) : null;
-      return b && a.s[a.s.length - 1][0] === at && b.s[0][0] === at ? { ...a, h: finalHead(a, b, cfg) } : a;
+      return b && a.s[a.s.length - 1][0] === at && b.s[0][0] === at ? { ...a, h: finalHead(a, b) } : a;
     });
   }
 
@@ -284,10 +307,13 @@
   }
 
   // The part of a train's run inside a corridor (see config.js), or null.
-  function clip(stops, c) {
-    if (!c.stations && !c.exclude) return stops;
+  function clip(stops, c, line) {
+    // a line can have its own stations in a corridor (T1 Central - Parramatta
+    // in the Inner West)
+    const only = c.lineStations && c.lineStations[line];
+    if (!only && !c.stations && !c.exclude) return stops;
     const name = (st) => state.stations[st][0];
-    const keep = c.stations ? new Set(c.stations) : null;
+    const keep = only ? new Set(only) : c.stations ? new Set(c.stations) : null;
     const drop = new Set(c.exclude || []);
     const inside = (st) => (keep ? keep.has(name(st)) : !drop.has(name(st)));
     const runs = [];
@@ -525,8 +551,12 @@
       }
       // through trains change run number here (T1 at Central Electric)
       if (key === opts.throughKey && trips.some((t) => t.rb)) {
+        // a change of line shows the new line's code (T9 on as T1); a lap of
+        // the City Circle shows CC
+        const badge = (t) => t.rbLoop ? '<span class="line cc">CC</span>'
+          : t.rbLine && t.rbLine !== t.line ? `<span class="line" style="background:${esc(lines[t.rbLine].colour)}">${esc(t.rbLine)}</span>` : "";
         h += '<tr class="change"><th class="stn">Continues as</th>' + trips.map((t) =>
-          `<td>${t.rb && t.byKey.has(key) ? `<b>${esc(t.rb)}</b>` : ""}</td>`).join("") + "</tr>";
+          `<td>${t.rb && t.byKey.has(key) ? `${badge(t)}<b>${esc(t.rb)}</b>` : ""}</td>`).join("") + "</tr>";
       }
     });
     // a regional train cut to this area says where it goes on to or came from
@@ -552,10 +582,13 @@
     state.arrows = null;
     const groups = [];
     try {
-      for (const c of codes) {
-        const f = await getJSON(`lines/${encodeURIComponent(c)}/${state.index.lines[c].dates[day]}.json`);
-        const thr = C.through && C.through[c];
-        const found = (thr ? joinThrough(f.trips, thr) : f.trips).filter(hit).map((t) => ({ ...t, line: c, e: c === "X" ? 1 : 0 }));
+      const files = await Promise.all(codes.map(async (c) => [c, await getJSON(`lines/${encodeURIComponent(c)}/${state.index.lines[c].dates[day]}.json`)]));
+      const partners = new Map();
+      for (const [c, f] of files) if ((C.throughLines || []).includes(c)) for (const t of f.trips) { if (!partners.has(t.r)) partners.set(t.r, []); partners.get(t.r).push({ ...t, line: c }); }
+      for (const [c, f] of files) {
+        let list = f.trips.map((t) => ({ ...t, line: c, e: c === "X" ? 1 : 0 }));
+        if ((C.throughLines || []).includes(c)) list = joinThrough(list, partners, { line: c, lineView: true });
+        const found = list.filter(hit);
         if (found.length) groups.push([c, found]);
       }
     } catch (e) {
@@ -572,6 +605,7 @@
     let html = "";
     for (const [c, found] of groups) {
       orient(found);
+      for (const t of found) if (t.fixDir) t.dir = t.fixDir;
       const thr = C.through && C.through[c];
       for (const dir of ["down", "up"]) {
         const ts = found.filter((t) => t.dir === dir);
@@ -582,8 +616,38 @@
         const name = c === "X" ? "Non-revenue" : lineLabel(c);
         const way = thr ? thr.labels[dir === "down" ? 0 : 1] : dir === "down" ? "Down" : "Up";
         html += `<h2 class="run-head">${esc(name)}, ${esc(way)}</h2>` + table(ts, rows, { pass: el.pass.checked, plat: el.plat.checked, changes: [],
-          throughKey: thr ? `${state.byName.get(thr.at)}#1` : null }, ts);
+          throughKey: `${state.byName.get(C.throughAt)}#1` }, ts);
       }
+    }
+    el.table.innerHTML = html;
+  }
+
+  // Every train of one non-revenue kind that day (Freight & inspection:
+  // track machines, inspection trains and light engines), each on its own,
+  // whole journeys, both ways
+  async function renderKind(kind, day, id) {
+    const X = state.index.lines.X;
+    state.arrows = null;
+    el.note.textContent = "Freight trains often run off path or on generic paths that aren't in the published GTFS, so most of them won't be here.";
+    el.note.hidden = false;
+    if (!X || !X.dates[day]) { el.table.innerHTML = `<div class="empty">None on ${esc(day)}.</div>`; return; }
+    el.table.innerHTML = '<div class="empty">Loading…</div>';
+    let f;
+    try { f = await getJSON(`lines/X/${X.dates[day]}.json`); } catch (e) {
+      if (id === renderId) el.table.innerHTML = `<div class="empty">Couldn't load the timetable (${esc(e.message)}).</div>`;
+      return;
+    }
+    if (id !== renderId) return;
+    const ts = f.trips.filter((t) => t.c === kind).map((t) => ({ ...t, line: "X", e: 1, dir: t.d }))
+      .sort((a, b) => a.s[0][1] - b.s[0][1]);
+    if (!ts.length) { el.table.innerHTML = `<div class="empty">None on ${esc(day)}.</div>`; return; }
+    let html = "";
+    for (const t of ts) {
+      t.stops = keyed(t);
+      t.byKey = new Map(t.stops.map((x) => [x.key, x]));
+      const name = (x) => state.stations[x[0]][0];
+      html += `<h2 class="run-head">${esc(t.r)}, ${esc(name(t.s[0]))} to ${esc(name(t.s[t.s.length - 1]))}</h2>` +
+        table([t], t.stops.map((x) => x.key), { pass: true, plat: el.plat.checked, changes: [] }, [t]);
     }
     el.table.innerHTML = html;
   }
@@ -696,6 +760,7 @@
     const day = el.date.value;
     const notes = [];
     if (el.run.value.trim()) return renderRun(el.run.value.trim().toUpperCase(), day, id);
+    if (el.line.value.startsWith("k:")) return renderKind(el.line.value.slice(2), day, id);
     const missing = codes.filter((c) => !state.index.lines[c].dates[day]);
     if (missing.length === codes.length) {
       el.table.innerHTML = `<div class="empty">${day < state.index.first || day > state.index.last
@@ -748,10 +813,26 @@
     }));
     const all = [];
     const through = !corridor && C.through && C.through[codes[0]];
+    // trains running on through Central Electric under a new run, maybe on
+    // another line (a T2 on round the City Circle as a T8 run): in a line's
+    // own timetable they join end to end, in a corridor only City Circle laps
+    const throughLines = C.throughLines || [];
+    let partners = new Map();
+    if (codes.some((c) => throughLines.includes(c))) {
+      const more = throughLines.filter((c) => !codes.includes(c) && state.index.lines[c] && state.index.lines[c].dates[day]);
+      let extra = [];
+      try {
+        extra = await Promise.all(more.map(async (c) => [c, await getJSON(`lines/${encodeURIComponent(c)}/${state.index.lines[c].dates[day]}.json`)]));
+      } catch (e) { extra = []; }
+      if (id !== renderId) return;
+      for (const [c, f] of [...files, ...extra]) for (const t of f.trips) { if (!partners.has(t.r)) partners.set(t.r, []); partners.get(t.r).push({ ...t, line: c }); }
+    }
     for (const [line, f] of files) {
-      const thr = C.through && C.through[line];
-      for (const t of (through ? joinThrough(f.trips, through) : thr ? throughHeads(f.trips, thr) : f.trips)) {
-        const s = corridor ? clip(t.s, corridor) : t.s;
+      let list = f.trips.map((t) => ({ ...t, line }));
+      if (corridor && C.through && C.through[line]) list = throughHeads(list);
+      if (throughLines.includes(line)) list = joinThrough(list, partners, { line, lineView: !corridor });
+      for (const t of list) {
+        const s = corridor ? clip(t.s, corridor, line) : t.s;
         if (!s) continue;
         const trip = { ...t, s, line };
         // feeders: trains of the feeder lines, or running only on the far
@@ -795,6 +876,7 @@
       }
     }
     orient(all);
+    for (const t of all) if (t.fixDir) t.dir = t.fixDir;   // a City Circle lap goes the way it came in
     const trips = [];
     for (const t of all) {
       if (t.dir !== el.dir.value) continue;
@@ -832,14 +914,35 @@
       return s && (s.flag !== "p" || el.pass.checked);
     }));
     // station range: offer every station listed, keep the choice if it's still there
-    const prev = [el.sfrom.value || params.get("sf"), el.sto.value || params.get("st")];
+    // keep a station range someone chose, not the ends of another day's list
+    // (Sunday's trackwork stopping short shouldn't cut Monday down)
+    const prev = [(el.sfrom.selectedIndex > 0 && el.sfrom.value) || params.get("sf"),
+                  (el.sto.selectedIndex >= 0 && el.sto.selectedIndex < el.sto.options.length - 1 && el.sto.value) || params.get("st")];
     params.delete("sf"); params.delete("st");
-    const opts = used.map((k, i) => `<option value="${k}">${esc(state.stations[Number(k.split("#")[0])][0])}${
-      used.slice(0, i).some((x) => x.split("#")[0] === k.split("#")[0]) ? " (again)" : ""}</option>`).join("");
-    el.sfrom.innerHTML = opts;
-    el.sto.innerHTML = opts;
-    el.sfrom.value = used.includes(prev[0]) ? prev[0] : used[0];
-    el.sto.value = used.includes(prev[1]) ? prev[1] : used[used.length - 1];
+    // the City Circle (Central Electric, round the loop, Central Electric
+    // again) is one choice, "City Circle": from its first station, to its last
+    const stName = (k) => state.stations[Number(k.split("#")[0])][0];
+    const loopNames = new Set(C.cityCircle || []);
+    const groups = [];
+    for (let i = 0; i < used.length; i++) {
+      if (stName(used[i]) === C.throughAt) {
+        let j = i + 1;
+        while (j < used.length && loopNames.has(stName(used[j]))) j++;
+        if (j > i + 1 && j < used.length && stName(used[j]) === C.throughAt) {
+          groups.push({ name: "City Circle", first: used[i], last: used[j] });
+          i = j;
+          continue;
+        }
+      }
+      groups.push({ name: stName(used[i]), first: used[i], last: used[i],
+                    again: used.slice(0, i).some((x) => stName(x) === stName(used[i])) });
+    }
+    const opt = (g, k) => `<option value="${k}">${esc(g.name)}${g.again ? " (again)" : ""}</option>`;
+    el.sfrom.innerHTML = groups.map((g) => opt(g, g.first)).join("");
+    el.sto.innerHTML = groups.map((g) => opt(g, g.last)).join("");
+    const firsts = groups.map((g) => g.first), lasts = groups.map((g) => g.last);
+    el.sfrom.value = firsts.includes(prev[0]) ? prev[0] : firsts[0];
+    el.sto.value = lasts.includes(prev[1]) ? prev[1] : lasts[lasts.length - 1];
     let a = used.indexOf(el.sfrom.value), b = used.indexOf(el.sto.value);
     if (a > b) [a, b] = [b, a];
     used = used.slice(a, b + 1);
@@ -884,7 +987,7 @@
     }
     el.table.innerHTML = inRange.length
       ? table(cols, used, { pass: el.pass.checked, plat: el.plat.checked, changes,
-                            throughKey: through ? `${byName.get(through.at)}#1` : null, arrows: arrowMode, branch }, trips)
+                            throughKey: `${byName.get(C.throughAt)}#1`, arrows: arrowMode, branch }, trips)
       : '<div class="empty">No trains in that range.</div>';
     if (arrowMode && inRange.length) {
       state.arrows = () => drawArrows(changes, cols);

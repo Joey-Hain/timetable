@@ -244,3 +244,6 @@ footer { font-size: 0.8rem; color: var(--muted); }
 /* run search: a heading over each line's table */
 .run-head { font-size: 0.85rem; font-weight: normal; color: var(--muted); margin: 1.2rem 0 0.4rem; }
 .run-head:first-child { margin-top: 0; }
+/* a lap of the City Circle in "Continues as" */
+.tt .line.cc { background: #fff; color: var(--text); box-shadow: inset 0 0 0 1.5px var(--text); }
+.tt tr.change .line { margin-right: 0.3rem; width: auto; }
