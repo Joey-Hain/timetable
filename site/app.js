@@ -260,6 +260,29 @@
     });
   }
 
+  // Branches as printed timetables have them (config.js `branches`): the
+  // branch stations straight after the junction going out, straight before
+  // it coming in, with the main line carrying on after them. Moves them in
+  // `master` and returns them, to indent.
+  function branches(master, trips) {
+    const marked = new Set();
+    const goes = new Set();
+    for (const t of trips) t.stops.forEach((x, i) => { if (i) goes.add(t.stops[i - 1].key + ">" + x.key); });
+    for (const br of C.branches || []) {
+      const j = `${state.byName.get(br.at)}#1`;
+      const ids = new Set(br.stations.map((name) => state.byName.get(name)));
+      const keys = master.filter((k) => ids.has(Number(k.split("#")[0])));
+      if (!master.includes(j) || !keys.length) continue;
+      const out = goes.has(j + ">" + keys[0]), back = goes.has(keys[keys.length - 1] + ">" + j);
+      if (out || back) {
+        for (const k of keys) master.splice(master.indexOf(k), 1);
+        master.splice(master.indexOf(j) + (out ? 1 : 0), 0, ...keys);
+      }
+      keys.forEach((k) => marked.add(k));
+    }
+    return marked;
+  }
+
   // The part of a train's run inside a corridor (see config.js), or null.
   function clip(stops, c) {
     if (!c.stations && !c.exclude) return stops;
@@ -488,7 +511,7 @@
       const st = Number(key.split("#")[0]);
       const gap = i && !next.has(master[i - 1] + ">" + key) ? ' class="gap"' : "";
       const here = (opts.changes || []).filter((c) => c.key === key);
-      const row = (k, role, cls) => `<tr${cls} data-k="${k}"><th class="stn">${esc(names[st][0])}${role ? ` <span class="role">${role}</span>` : ""}</th>` +
+      const row = (k, role, cls) => `<tr${cls} data-k="${k}"><th class="stn${opts.branch && opts.branch.has(key) ? " branch" : ""}">${esc(names[st][0])}${role ? ` <span class="role">${role}</span>` : ""}</th>` +
         trips.map((t) => cell(t.byKey.get(key), opts, t, role)).join("") + "</tr>";
       if (!here.length) h += row(key, "", gap);
       else {
@@ -772,6 +795,7 @@
       for (const k of own) move(k, mk, !before);
       for (const k of own) move(k.replace(/~\d+$/, ""), mk, before);
     }
+    const branch = branches(master, trips.filter((t) => !t.e));
     let used = master.filter((k) => trips.some((t) => {
       const s = t.byKey.get(k);
       return s && (s.flag !== "p" || el.pass.checked);
@@ -829,7 +853,7 @@
     }
     el.table.innerHTML = inRange.length
       ? table(cols, used, { pass: el.pass.checked, plat: el.plat.checked, changes,
-                            throughKey: through ? `${byName.get(through.at)}#1` : null, arrows: arrowMode }, trips)
+                            throughKey: through ? `${byName.get(through.at)}#1` : null, arrows: arrowMode, branch }, trips)
       : '<div class="empty">No trains in that range.</div>';
     if (arrowMode && inRange.length) {
       state.arrows = () => drawArrows(changes, cols);

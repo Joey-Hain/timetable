@@ -239,3 +239,5 @@ footer { font-size: 0.8rem; color: var(--muted); }
 .tt-scroll svg.arrows path { fill: none; stroke: currentColor; stroke-width: 1.2; }
 .tt-scroll svg.arrows marker path { fill: currentColor; stroke: none; }
 .tt .stn .role { color: var(--muted); font-size: 0.72rem; margin-left: 0.25rem; }
+/* branch stations, indented under their junction */
+.tt .stn.branch { padding-left: 1.3rem; }

@@ -72,6 +72,16 @@ window.TT_CONFIG = {
     { at: "Lidcombe", feeders: ["T6", "T7"] },
   ],
 
+  // Branch lines: listed straight after the junction (before it coming in)
+  // and indented, the main line carrying on after them.
+  branches: [
+    { at: "Sutherland", stations: ["Kirrawee", "Gymea", "Miranda", "Caringbah", "Woolooware", "Cronulla"] },
+    { at: "Coniston", stations: ["Lysaghts", "Cringila", "Port Kembla North", "Port Kembla"] },
+    { at: "Blacktown", stations: ["Marayong", "Quakers Hill", "Schofields", "Riverstone", "Vineyard", "Mulgrave",
+                                  "Windsor", "Clarendon", "East Richmond", "Richmond"] },
+    { at: "Glenfield", stations: ["Edmondson Park", "Leppington"] },
+  ],
+
   // Lines whose trains run through Central from one half to the other under a
   // new run number (T1 Western <-> North Shore). A line on its own shows each
   // train end to end, the new run marked at `at`; `down` is a station only the
