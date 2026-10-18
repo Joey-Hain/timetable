@@ -71,6 +71,8 @@ def central_part(platform: str) -> str:
         "Central ESR" if n in (24, 25) else "Central"
 
 
+CITY_CIRCLE = {"Central Electric", "Town Hall", "Wynyard", "Circular Quay", "St James", "Museum"}
+
 # a train's headboard says Central, whichever part of it the train uses
 HEAD_NAMES = {"Sydney Terminal": "Central", "Central Electric": "Central", "Central ESR": "Central"}
 
@@ -249,6 +251,10 @@ def build(gtfs: Path, out: Path, today: date | None = None):
         # leaving Central round the City Circle (pick up only) says "City
         # Circle via Town Hall" there, "Macarthur via Airport" after
         full = [x for x in part if x["pickup_type"] != "1" and x["drop_off_type"] != "1" and (x.get("stop_headsign") or "").strip()]
+        # a train heading out after a lap of the City Circle: where it goes
+        # once it leaves, not "City Circle via Town Hall" from the lap
+        if last[0] not in CITY_CIRCLE:
+            full = [x for x in full if not x["stop_headsign"].strip().startswith("City Circle")] or full
         headsign = ((full[0] if full else part[0]).get("stop_headsign") or "").strip()
         if not headsign or headsign.lower() in ("empty train", "special"):
             headsign = HEAD_NAMES.get(last[0], last[0])
@@ -262,6 +268,23 @@ def build(gtfs: Path, out: Path, today: date | None = None):
             if nxt:
                 day_trip["f"] = nxt    # forms
             by_line_day[(line, d)].append(day_trip)
+
+    # a lap of the City Circle that ends out past it (Central, the loop,
+    # Redfern - Sydenham): its headboard is where it ends up, by the way it
+    # goes round ("Sydenham via Town Hall"), or where the train goes on to if
+    # it carries on the same way under a new number
+    for (line, d), trips in by_line_day.items():
+        runs = {t["r"]: t for t in trips}
+        for t in trips:
+            end = stations[t["s"][-1][0]][0]
+            if not t["h"].startswith("City Circle") or end in CITY_CIRCLE:
+                continue
+            nxt = runs.get(t["f"][0]) if t.get("f") and t["f"][1] else None
+            if nxt and nxt["d"] == t["d"]:
+                t["h"] = nxt["h"]
+            else:
+                via = t["h"].split(" via ", 1)[1] if " via " in t["h"] else ""
+                t["h"] = f"{end} via {via}" if via else end
 
     # non-revenue trains in one file per day ("X"), each with its kind "c":
     # empty runs and MTPV (track machines, locomotives) with every timing
