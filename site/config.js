@@ -104,6 +104,9 @@ window.TT_CONFIG = {
                                  "Wirragulla", "Dungog"] },
   ],
 
+  // Stations always indented in a timetable, all their rows
+  indent: { "c:newcastle": ["Newcastle Interchange", "Hamilton"] },
+
   // Lines whose trains run through Central from one half to the other under a
   // new run number (T1 Western <-> North Shore). A line on its own shows each
   // train end to end, the new run marked at `at`; `down` is a station only the

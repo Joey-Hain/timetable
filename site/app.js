@@ -1339,6 +1339,12 @@
       for (const k of own) move(k.replace(/~\d+$/, ""), mk, before);
     }
     const branch = branches(master, trips.filter((t) => !t.e));
+    // stations indented in a given timetable whatever the order says
+    // (config.js `indent`: Newcastle Interchange and Hamilton off the Hunter)
+    for (const name of (C.indent || {})[el.line.value] || []) {
+      const id = byName.get(name);
+      for (const k of master) if (Number(k.split("#")[0]) === id) branch.set(k, Math.max(branch.get(k) || 0, 1));
+    }
     // an empty run whose way through the stations doesn't follow the
     // timetable's order (an inspection train doubling back) keeps only the
     // timing points that do, so its times always read down the page
