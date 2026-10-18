@@ -610,8 +610,11 @@
     return { key: mk, cells, pairs, arrows, arrowCells, secondaryFirst, label: `Change at ${state.stations[at][0]}` };
   }
 
-  const KIND = { ecs: "Empty cars", mtpv: "MTPV", special: "Special", charter: "Charter" };
-  const KIND_COLOUR = { ecs: "#888888", mtpv: "#8a6a3a", special: "#7a4f9e", charter: "#7a4f9e" };
+  const KIND = { ecs: "Empty cars", mtpv: "MTPV", special: "Special", charter: "Charter", goods: "Goods", test: "Test" };
+  const KIND_COLOUR = { ecs: "#888888", mtpv: "#8a6a3a", special: "#7a4f9e", charter: "#7a4f9e", goods: "#5b4a3a", test: "#2f7f7a" };
+  // the MTPV kind by stock: I inspection cars stay MTPV, R the new regional
+  // fleet on test, locomotives goods
+  const kindOf = (t) => (t.c !== "mtpv" ? t.c : /^I/.test(t.v) ? "mtpv" : /^R/.test(t.v) ? "test" : "goods");
 
   // to the half minute, for an interchange's arr and dep rows: 18:02½
   const hhmm30 = (t) => { const r = Math.round(t / 30) * 30; return hhmm(r) + (r % 60 ? "½" : ""); };
@@ -657,7 +660,7 @@
     let h = '<div class="tt-scroll"><table class="tt"><thead><tr><th class="stn"></th>';
     h += trips.map((t) =>
       `<th${t.e ? ' class="ecs"' : ""}><span class="head">${esc(t.h)}</span>` +
-      `<span class="line" style="background:${esc(t.e ? KIND_COLOUR[t.c] || "#888888" : lines[t.line].colour)}">${esc(t.e ? KIND[t.c] || "Non-revenue" : t.line)}</span>` +
+      `<span class="line" style="background:${esc(t.e ? KIND_COLOUR[kindOf(t)] || "#888888" : lines[t.line].colour)}">${esc(t.e ? KIND[kindOf(t)] || "Non-revenue" : t.line)}</span>` +
       `<span class="run">${esc(t.r)}</span><span class="set" title="${esc(sets[t.v] || "")}">${esc(set(t.v))}</span>` +
       `</th>`).join("");
     // a regional train cut to this area: where it came from goes with Formed
