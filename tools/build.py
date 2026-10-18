@@ -11,7 +11,8 @@ Writes
 
 A line file is {"trips": [trip, ...]} with each trip
   {"r": run number, "d": "up"|"down", "h": headsign, "v": set type (e.g. "B8"),
-   "b": formed by, "f": forms (each [run, 1 if it carries passengers else 0]),
+   "b": formed by, "f": forms (each [run, 1 if it carries passengers else 0];
+   forms adds where that run goes),
    "s": [[station, arr, dwell, platform, flag], ...],
    "o" / "t": where a regional train cut to Sydney Trains' area really starts /
    ends, by name}
@@ -348,6 +349,14 @@ def build(gtfs: Path, out: Path, today: date | None = None):
                     cut["t"] = CITY_NAMES.get(stations[t["s"][-1][0]][0], stations[t["s"][-1][0]][0])
                 kept.append(cut)
         trips[:] = kept
+
+    # "forms": where the next run goes, as its headboard says (empty runs:
+    # where they go)
+    heads = {(d, t["r"]): t["h"] for (line, d), trips in by_line_day.items() for t in trips}
+    for (line, d), trips in by_line_day.items():
+        for t in trips:
+            if t.get("f") and (d, t["f"][0]) in heads:
+                t["f"] = [t["f"][0], t["f"][1], heads[(d, t["f"][0])]]
 
     # one file per distinct service day of each line
     (out / "lines").mkdir(parents=True, exist_ok=True)

@@ -517,7 +517,9 @@
     const sets = state.index.sets || {};
     // set type number first (8B, not B8, which reads like a line)
     const set = (v) => String(v || "").replace(/^([A-Za-z]+)(\d+)$/, "$2$1");
-    const working = (w) => (w ? esc(w[0]) + (w[1] ? "" : '<span class="work"> empty</span>') : "");
+    // a run, "empty" if it carries no one, and where it goes (forms)
+    const working = (w) => (w ? esc(w[0]) + (w[1] ? "" : '<span class="work"> empty</span>') +
+      (w[2] ? `<br><span class="work">${esc(w[2])}</span>` : "") : "");
     let h = '<div class="tt-scroll"><table class="tt"><thead><tr><th class="stn"></th>';
     h += trips.map((t) =>
       `<th${t.e ? ' class="ecs"' : ""}><span class="head">${esc(t.h)}</span>` +
