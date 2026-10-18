@@ -75,7 +75,6 @@ window.TT_CONFIG = {
     { at: "Hamilton", lines: ["HUN", "CCN"], feeders: ["HUN"], split: ["Newcastle Interchange"] },
     { at: ["Helensburgh", "Thirroul"], lines: ["SCO"], locals: ["Thirroul", "Waterfall"],
       express: ["Bulli", "Woonona", "Bellambi", "Corrimal", "Towradgi", "Fairy Meadow"] },
-    { at: "Waterfall", lines: ["T4", "SCO"], feeders: ["T4"] },
     { at: "Kiama", lines: ["SCO"], side: ["Gerringong", "Berry", "Bomaderry (Nowra)"] },
     { at: "Campbelltown", atUp: "Macarthur", lines: ["SHL", "T8"], feeders: ["SHL"] },
     { at: "Moss Vale", lines: ["SHL"], only: ["SHL"],
