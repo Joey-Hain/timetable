@@ -583,28 +583,34 @@
       // a feeder starts or ends here (or one stop on: HUN to Newcastle);
       // all-stations trains (express changes) can run through
       if (!ix.express && !(secondaryFirst ? t.stops.slice(-2) : t.stops.slice(0, 2)).some((x) => x.key === mk)) continue;
-      let best = null;
+      // the best connection (ix.perLine: the best from or to each line)
+      const bests = new Map();
       for (const m of prim) {
-        if (m === t || m.line === t.line) continue;
+        if (m === t || (ix.perLine && m.line === t.line)) continue;
         const ms = calls(m, mk);
         const wait = secondaryFirst ? ms.dep - s.arr : s.dep - ms.arr;
-        if (wait >= gap && wait <= most && (!best || wait < best.wait)) best = { m, wait };
+        if (wait < gap || wait > most) continue;
+        const k = ix.perLine ? m.line : "";
+        if (!bests.has(k) || wait < bests.get(k).wait) bests.set(k, { m, wait });
       }
-      if (!best) continue;
-      pairs.set(t, best.m);
-      // each side names the other train and when it's there:
-      //   arriving train: "to N418 / dep 06:42, 5 min"
-      //   leaving train:  "from V710 / arr 06:38"
-      const ms = calls(best.m, mk);
-      const mins = Math.round(best.wait / 60);
-      const wait = `<span class="work">, ${mins} min</span>`;
-      const [inT, inS, outT, outS] = secondaryFirst ? [t, s, best.m, ms] : [best.m, ms, t, s];
-      // arrow mode (?arrows=1): from the arriving train's arr time to the
-      // leaving train's dep time, as the NSW TrainLink regional timetables
-      arrows.push({ inT, inKey: `${mk}|arr`, outT, outKey: `${mk}|dep`, mins });
-      if (!arrowCells.has(outT)) arrowCells.set(outT, `<span class="work">${mins} min</span>`);
-      add(inT, `to <b>${esc(outT.r)}</b><br><span class="work">dep ${hhmm(outS.dep)}</span>${wait}`);
-      add(outT, `from <b>${esc(inT.r)}</b><br><span class="work">arr ${hhmm(inS.arr)}</span>`);
+      if (!bests.size) continue;
+      const all = [...bests.values()].sort((a, b) => a.wait - b.wait);
+      pairs.set(t, all[0].m);
+      for (const best of all) {
+        // each side names the other train and when it's there:
+        //   arriving train: "to N418 / dep 06:42, 5 min"
+        //   leaving train:  "from V710 / arr 06:38"
+        const ms = calls(best.m, mk);
+        const mins = Math.round(best.wait / 60);
+        const wait = `<span class="work">, ${mins} min</span>`;
+        const [inT, inS, outT, outS] = secondaryFirst ? [t, s, best.m, ms] : [best.m, ms, t, s];
+        // arrow mode: from the arriving train's arr time to the leaving
+        // train's dep time, as the NSW TrainLink regional timetables
+        arrows.push({ inT, inKey: `${mk}|arr`, outT, outKey: `${mk}|dep`, mins });
+        if (!arrowCells.has(outT)) arrowCells.set(outT, `<span class="work">${mins} min</span>`);
+        add(inT, `to <b>${esc(outT.r)}</b><br><span class="work">dep ${hhmm(outS.dep)}</span>${wait}`);
+        add(outT, `from <b>${esc(inT.r)}</b><br><span class="work">arr ${hhmm(inS.arr)}</span>`);
+      }
     }
     if (!pairs.size) return null;
     return { key: mk, cells, pairs, arrows, arrowCells, secondaryFirst, label: `Change at ${state.stations[at][0]}` };

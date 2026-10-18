@@ -65,6 +65,8 @@ window.TT_CONFIG = {
   //   split:   stations the feeders get rows of their own at, either side of
   //            the change: Broadmeadow, Newcastle Interchange (HUN), Hamilton
   //            arr / change / dep, Newcastle Interchange (CCN), Waratah
+  //   perLine: the best change from (or to) each other line, not just the
+  //            soonest (T6 at Lidcombe)
   //   only:    both trains must be on these lines (no change to a booked
   //            regional train)
   interchanges: [
@@ -77,7 +79,7 @@ window.TT_CONFIG = {
     { at: "Moss Vale", lines: ["SHL"], only: ["SHL"],
       side: ["Exeter", "Bundanoon", "Penrose", "Wingello", "Tallong", "Marulan", "Goulburn"] },
     { at: "Lithgow", lines: ["BMT"], only: ["BMT"], side: ["Rydal", "Tarana", "Bathurst"] },
-    { at: "Lidcombe", feeders: ["T6", "T7"] },
+    { at: "Lidcombe", feeders: ["T6", "T7"], perLine: true },
   ],
 
   // Branch lines: listed straight after the junction (before it coming in)
