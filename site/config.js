@@ -60,12 +60,7 @@ window.TT_CONFIG = {
     { at: "Thirroul", lines: ["SCO"], locals: ["Thirroul", "Waterfall"],
       express: ["Bulli", "Woonona", "Bellambi", "Corrimal", "Towradgi", "Fairy Meadow"] },
     { at: "Kiama", lines: ["SCO"], split: ["Kiama"], side: ["Gerringong", "Berry", "Bomaderry (Nowra)"] },
-    { at: "Sutherland", lines: ["T4"], split: ["Sutherland"],
-      side: ["Kirrawee", "Gymea", "Miranda", "Caringbah", "Woolooware", "Cronulla"] },
     { at: "Campbelltown", atUp: "Macarthur", lines: ["SHL", "T8"], feeders: ["SHL"], split: ["Campbelltown", "Macarthur"] },
-    { at: "Moss Vale", lines: ["SHL"], split: ["Moss Vale"],
-      side: ["Exeter", "Bundanoon", "Penrose", "Wingello", "Tallong", "Marulan", "Goulburn"] },
-    { at: "Lithgow", lines: ["BMT"], split: ["Lithgow"], side: ["Rydal", "Tarana", "Bathurst"] },
     { at: "Lidcombe", feeders: ["T6", "T7"], split: ["Lidcombe"] },
   ],
 };
