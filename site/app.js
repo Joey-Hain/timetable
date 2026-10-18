@@ -98,17 +98,29 @@
 
   // A trip's stops keyed by station and visit number (City Circle trains pass
   // Central twice), with the time shown: departure, or arrival at the end.
+  // Feeder trains at an interchange (HUN at Hamilton) get rows of their own
+  // there ("~f"), so the corridor reads one way: Dungog - Hamilton, change,
+  // Hamilton - Sydney.
   function keyed(trip) {
     const seen = new Map();
+    const split = trip.split || new Set();
     return trip.s.map(([st, arr, dwell = 0, plat = "", flag = ""], i) => {
       const n = (seen.get(st) || 0) + 1;
       seen.set(st, n);
       const last = i === trip.s.length - 1;
       // picking up only at the start / setting down only at the end goes without saying
       if ((i === 0 && flag === "u") || (last && flag === "d")) flag = "";
-      return { key: `${st}#${n}`, st, arr, dep: arr + dwell, t: last || flag === "p" ? arr : arr + dwell, plat, flag, last };
+      const base = `${st}#${n}`;
+      return { key: split.has(st) ? base + "~f" : base, base, st, arr, dep: arr + dwell,
+               t: last || flag === "p" ? arr : arr + dwell, plat, flag, last };
     });
   }
+
+  const distKm = (st) => {
+    const [, lat, lon] = state.stations[st];
+    const x = (lon - 151.2065) * Math.cos((lat * Math.PI) / 180);
+    return 111.2 * Math.hypot(x, lat + 33.8832);
+  };
 
   // Merge every stopping pattern into one station order. Longest patterns go
   // first; a station not yet listed goes straight after the one before it, so
@@ -117,11 +129,16 @@
     const seqs = new Map();
     for (const t of trips) {
       const k = t.stops.map((s) => s.key).join(",");
-      seqs.set(k, (seqs.get(k) || 0) + 1);
+      const e = seqs.get(k) || { n: 0, regional: state.index.lines[t.line].network === "regional" };
+      e.n += 1;
+      seqs.set(k, e);
     }
+    // regional trains last: they run through without calling much, and would
+    // otherwise pull whole branches in after the junction
     const order = [...seqs.entries()]
-      .map(([k, n]) => [k.split(","), n])
-      .sort((a, b) => b[0].length - a[0].length || b[1] - a[1]);
+      .map(([k, e]) => [k.split(","), e.n, e.regional])
+      .sort((a, b) => a[2] - b[2] || b[0].length - a[0].length || b[1] - a[1]);
+    const st = (k) => Number(k.split("#")[0]);
     const master = [];
     for (const [seq] of order) {
       let anchor = -1;
@@ -141,7 +158,13 @@
           master.splice(++anchor, 0, key);
         }
       }
-      if (pending.length) master.push(...pending);
+      if (pending.length) {
+        // a block sharing no station (HUN beyond Hamilton): put it at the end
+        // of the list nearer it, so Up still runs towards Sydney
+        const mean = pending.reduce((a, k) => a + distKm(st(k)), 0) / pending.length;
+        const top = master.length && Math.abs(mean - distKm(st(master[0]))) < Math.abs(mean - distKm(st(master[master.length - 1])));
+        if (top) master.unshift(...pending); else master.push(...pending);
+      }
     }
     return master;
   }
@@ -179,15 +202,17 @@
   // Central) is Up.
   function orient(trips) {
     if (!trips.length) return;
+    const ids = (t) => t.s.map(([st]) => [t.split && t.split.has(st) ? "f" + st : st]);
     const rank = new Map();
     const seed = trips.reduce((a, b) => (b.s.length > a.s.length ? b : a));
-    seed.s.forEach(([st], i) => { if (!rank.has(st)) rank.set(st, i); });
+    ids(seed).forEach(([st], i) => { if (!rank.has(st)) rank.set(st, i); });
     const sign = new Map([[seed, 1]]);
     for (let pass = 0; pass < 6; pass++) {
       let changed = false;
       for (const t of trips) {
         if (sign.has(t)) continue;
-        const shared = t.s.filter(([st]) => rank.has(st));
+        const tid = ids(t);
+        const shared = tid.filter(([st]) => rank.has(st));
         if (shared.length < 2) continue;
         const a = rank.get(shared[0][0]), b = rank.get(shared[shared.length - 1][0]);
         if (a === b) continue;
@@ -196,9 +221,9 @@
         changed = true;
         // stations only this train reaches get ranks between its neighbours
         let last = null;
-        t.s.forEach(([st], i) => {
+        tid.forEach(([st], i) => {
           if (rank.has(st)) { last = rank.get(st); return; }
-          const r = last === null ? rank.get(shared[0][0]) - sg * (t.s.length - i) * 1e-3
+          const r = last === null ? rank.get(shared[0][0]) - sg * (tid.length - i) * 1e-3
             : last + sg * 1e-3;
           rank.set(st, r);
           last = r;
@@ -217,30 +242,70 @@
   // trains plus their usual running time from there.
   function sortTrips(trips) {
     const count = new Map();
-    for (const t of trips) for (const s of t.stops) count.set(s.key, (count.get(s.key) || 0) + 1);
+    for (const t of trips) {
+      t.byBase = new Map(t.stops.map((s) => [s.base, s]));
+      for (const s of t.stops) count.set(s.base, (count.get(s.base) || 0) + 1);
+    }
     let ref = null;
     for (const [k, n] of count) if (!ref || n > count.get(ref)) ref = k;
     const diffs = new Map();
     for (const t of trips) {
-      const r = t.byKey.get(ref);
+      const r = t.byBase.get(ref);
       if (!r) continue;
       for (const s of t.stops) {
-        if (!diffs.has(s.key)) diffs.set(s.key, []);
-        diffs.get(s.key).push(r.t - s.t);
+        if (!diffs.has(s.base)) diffs.set(s.base, []);
+        diffs.get(s.base).push(r.t - s.t);
       }
     }
     const median = (a) => { const b = [...a].sort((x, y) => x - y); return b[Math.floor(b.length / 2)]; };
     for (const t of trips) {
-      const r = t.byKey.get(ref);
+      const r = t.byBase.get(ref);
       if (r) { t.ref = r.t; continue; }
       let best = null;
       for (const s of t.stops) {
-        const d = diffs.get(s.key);
-        if (d && (!best || d.length > diffs.get(best.key).length)) best = s;
+        const d = diffs.get(s.base);
+        if (d && (!best || d.length > diffs.get(best.base).length)) best = s;
       }
-      t.ref = best ? best.t + median(diffs.get(best.key)) : t.stops[0].t;
+      t.ref = best ? best.t + median(diffs.get(best.base)) : t.stops[0].t;
     }
     trips.sort((a, b) => a.ref - b.ref || a.line.localeCompare(b.line));
+  }
+
+  // Timed connections at a corridor's interchange: each feeder train (HUN)
+  // with the first main-line train it meets there, allowing ix.minutes
+  // (default 2) to change and waiting at most ix.maxMinutes (default 30). Only feeders that start or end at the interchange
+  // count, not trains running through. Returns where the "Change" row goes
+  // and what each column shows, or null.
+  function connections(trips, rows, ix, at) {
+    const fk = `${at}#1~f`, mk = `${at}#1`;
+    const fi = rows.indexOf(fk), mi = rows.indexOf(mk);
+    if (fi < 0 || mi < 0) return null;
+    const feederFirst = fi < mi;   // feeders arrive, then main-line trains leave
+    const gap = (ix.minutes ?? 2) * 60;
+    const cells = new Map();
+    const pairs = new Map();
+    const add = (t, html) => cells.set(t, (cells.get(t) ? cells.get(t) + "<br>" : "") + html);
+    const mains = trips.filter((t) => !t.split && t.byKey.get(mk) && t.byKey.get(mk).flag !== "p");
+    for (const f of trips) {
+      const s = f.split && f.byKey.get(fk);
+      if (!s || s.flag === "p" || !(feederFirst ? f.stops.slice(-2).some((x) => x.key.endsWith("~f"))
+                                                 : f.stops.slice(0, 2).some((x) => x.key.endsWith("~f")))) continue;
+      let best = null;
+      for (const m of mains) {
+        const ms = m.byKey.get(mk);
+        const wait = feederFirst ? ms.dep - s.arr : s.dep - ms.arr;
+        if (wait >= gap && wait <= (ix.maxMinutes ?? 30) * 60 && (!best || wait < best.wait)) best = { m, wait };
+      }
+      if (!best) continue;
+      const mins = Math.round(best.wait / 60);
+      pairs.set(f, best.m);
+      add(f, `${feederFirst ? "→" : "←"} ${esc(best.m.r)}<br><span class="work">${mins} min</span>`);
+      add(best.m, `${feederFirst ? "←" : "→"} ${esc(f.r)}`);
+    }
+    // the row goes between the feeders' rows and the main line's
+    const fRows = rows.map((k, i) => (k.endsWith("~f") ? i : -1)).filter((i) => i >= 0);
+    const after = feederFirst ? Math.max(...fRows) : Math.min(...fRows) - 1;
+    return { after, cells, pairs, feederFirst, label: `Change at ${state.stations[at][0]}` };
   }
 
   function cell(s, opts) {
@@ -284,6 +349,10 @@
       const st = Number(key.split("#")[0]);
       const gap = i && !next.has(master[i - 1] + ">" + key) ? ' class="gap"' : "";
       h += `<tr${gap}><th class="stn">${esc(names[st][0])}</th>` + trips.map((t) => cell(t.byKey.get(key), opts)).join("") + "</tr>";
+      if (opts.change && opts.change.after === i) {
+        h += `<tr class="change"><th class="stn">${esc(opts.change.label)}</th>` +
+          trips.map((t) => `<td>${opts.change.cells.get(t) || ""}</td>`).join("") + "</tr>";
+      }
     });
     h += '</tbody><tfoot><tr><th class="stn">Forms</th>' + trips.map((t) =>
       `<td>${working(t.f)}</td>`).join("") + "</tr></tfoot>";
@@ -320,11 +389,21 @@
     if (id !== renderId) return;
 
     const corridor = el.line.value.startsWith("c:") ? C.corridors.find((c) => "c:" + c.id === el.line.value) : null;
+    const byName = new Map(state.stations.map(([n], i) => [n, i]));
+    const ix = corridor && corridor.interchange;
+    const splitIds = ix ? new Set(ix.stations.map((n) => byName.get(n))) : null;
     const all = [];
     for (const [line, f] of files) {
       for (const t of f.trips) {
         const s = corridor ? clip(t.s, corridor) : t.s;
-        if (s) all.push({ ...t, s, line });
+        if (!s) continue;
+        const trip = { ...t, s, line };
+        // only trains starting or ending at the interchange are feeders; one
+        // running through (an SHL from Central) is part of the main line
+        if (ix && ix.feeders.includes(line) && (splitIds.has(s[0][0]) || splitIds.has(s[s.length - 1][0]))) {
+          trip.split = splitIds;
+        }
+        all.push(trip);
       }
     }
     orient(all);
@@ -361,9 +440,17 @@
     syncUrl();
     // trains calling within the range, by their first time there
     const lo = Number(el.from.value) * 3600, hi = Number(el.to.value) * 3600;
-    const inRange = trips.filter((t) => {
+    const firstTime = (t) => {
       const first = used.map((k) => t.byKey.get(k)).find((s) => s && s.flag !== "p");
-      return first && first.t >= lo && first.t < hi;
+      return first ? first.t : null;
+    };
+    // a feeder that takes passengers on from the main line (HUN in the Down
+    // direction) goes with the train it connects from
+    const pre = ix ? connections(trips, used, ix, byName.get(ix.at)) : null;
+    const inRange = trips.filter((t) => {
+      const m = pre && !pre.feederFirst && pre.pairs.get(t);
+      const ft = firstTime(m || t);
+      return ft !== null && firstTime(t) !== null && ft >= lo && ft < hi;
     });
     used = used.filter((k) => inRange.some((t) => {
       const s = t.byKey.get(k);
@@ -372,8 +459,22 @@
     notes.unshift(`${inRange.length} trains${inRange.length !== trips.length ? ` of ${trips.length}` : ""}, ${used.length} stations.`);
     el.note.textContent = notes.join(" ");
     el.note.hidden = false;
+    const change = ix ? connections(trips, used, ix, byName.get(ix.at)) : null;
+    let cols = inRange;
+    if (change) {
+      // each feeder sits next to the train it connects with: before it when
+      // it brings passengers in (Up), after it when it takes them on (Down)
+      const shown = new Set(inRange);
+      const moved = new Set([...change.pairs].filter(([f, m]) => shown.has(f) && shown.has(m)).map(([f]) => f));
+      cols = [];
+      for (const t of inRange) {
+        if (moved.has(t)) continue;
+        const feeders = [...change.pairs].filter(([f, m]) => m === t && moved.has(f)).map(([f]) => f);
+        if (change.feederFirst) cols.push(...feeders, t); else cols.push(t, ...feeders);
+      }
+    }
     el.table.innerHTML = inRange.length
-      ? table(inRange, used, { pass: el.pass.checked, plat: el.plat.checked }, trips)
+      ? table(cols, used, { pass: el.pass.checked, plat: el.plat.checked, change }, trips)
       : '<div class="empty">No trains in that range.</div>';
   }
 

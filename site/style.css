@@ -153,6 +153,14 @@ p { text-align: justify; text-justify: inter-word; }
 .tt thead .stn { z-index: 3; color: var(--muted); }
 .tt tbody tr:hover td, .tt tbody tr:hover th { background: var(--hover); }
 .tt tbody tr.worked > * { color: var(--muted); font-size: 0.72rem; border-bottom: 1px solid var(--border); }
+.tt tbody tr.change > * {
+  background: #f6f6f6;
+  font-size: 0.72rem;
+  color: var(--text);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.tt tbody tr.change th.stn { font-weight: bold; }
 .tt tfoot td, .tt tfoot th {
   border-top: 1px solid var(--border);
   border-bottom: 0;

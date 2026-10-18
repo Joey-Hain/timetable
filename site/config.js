@@ -22,6 +22,12 @@ window.TT_CONFIG = {
   // they run. Line codes as in the GTFS.
   //   stations: only these stations (a list), or
   //   exclude:  every station but these
+  //   interchange: {feeders, stations, at, minutes}: the feeder lines' trains
+  //             get rows of their own at `stations`, so the corridor reads one
+  //             way (Dungog - Hamilton, change, Hamilton - Sydney), and a
+  //             "Change at" row pairs each feeder train with the first main-line
+  //             train it meets at `at`, allowing `minutes` (default 2) to change
+  //             and waiting at most `maxMinutes` (default 30)
   //   dropVia:  leave out trains that run through one of these stations
   //             between two that are shown (CCN via the North Shore in the
   //             Northern corridor). Otherwise a train that leaves the corridor
@@ -35,8 +41,10 @@ window.TT_CONFIG = {
     { id: "western", name: "Western & Blue Mountains", lines: ["T1", "T5", "BMT", "WST"],
       exclude: [...NORTH_SHORE, ...HORNSBY_BEROWRA, ...T5_SOUTH] },
     { id: "newcastle", name: "Central Coast & Hunter", lines: ["CCN", "HUN", "NRC", "NRW"],
-      exclude: [...NORTH_SHORE, ...MAIN_WEST], dropVia: ["Chatswood"] },
+      exclude: [...NORTH_SHORE, ...MAIN_WEST], dropVia: ["Chatswood"],
+      interchange: { feeders: ["HUN"], stations: ["Hamilton", "Newcastle Interchange"], at: "Hamilton" } },
     { id: "innerwest", name: "Inner West", lines: ["T2", "T3"] },
-    { id: "south", name: "East Hills & Southern Highlands", lines: ["T8", "SHL", "STH"] },
+    { id: "south", name: "East Hills & Southern Highlands", lines: ["T8", "SHL", "STH"],
+      interchange: { feeders: ["SHL"], stations: ["Campbelltown", "Macarthur"], at: "Campbelltown" } },
   ],
 };
