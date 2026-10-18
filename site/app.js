@@ -232,7 +232,7 @@
     return `<td${attr}>${hhmm(s.t)}${flag}${plat}</td>`;
   }
 
-  function table(trips, master, opts) {
+  function table(trips, master, opts, allTrips) {
     const names = state.stations;
     const lines = state.index.lines;
     const sets = state.index.sets || {};
@@ -244,7 +244,11 @@
     // a rule above a station no train reaches straight from the one listed
     // before it: the start of another branch
     const next = new Set();
-    for (const t of trips) t.stops.forEach((s, i) => { if (i) next.add(t.stops[i - 1].key + ">" + s.key); });
+    for (const t of allTrips) {
+      // adjacent among the stations shown
+      const shown = t.stops.filter((s) => master.includes(s.key));
+      shown.forEach((s, i) => { if (i) next.add(shown[i - 1].key + ">" + s.key); });
+    }
     master.forEach((key, i) => {
       const st = Number(key.split("#")[0]);
       const gap = i && !next.has(master[i - 1] + ">" + key) ? ' class="gap"' : "";
@@ -331,7 +335,7 @@
     el.note.textContent = notes.join(" ");
     el.note.hidden = false;
     el.table.innerHTML = inRange.length
-      ? table(inRange, used, { pass: el.pass.checked, plat: el.plat.checked })
+      ? table(inRange, used, { pass: el.pass.checked, plat: el.plat.checked }, trips)
       : '<div class="empty">No trains in that range.</div>';
   }
 
