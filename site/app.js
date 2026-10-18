@@ -133,7 +133,7 @@
       const base = `${st}#${n}`;
       return { key: base + (split.get(st) || ""), base, st, arr, dep: arr + dwell,
                t: last || flag === "p" ? arr : arr + dwell, plat, flag, last, first: i === 0, join: !!stop.isJoin,
-               rbRun: stop.rbRun, rbLine: stop.rbLine, rbKind: stop.rbKind, rbThen: stop.rbThen, kind: stop.kind };
+               rbRun: stop.rbRun, rbLine: stop.rbLine, rbKind: stop.rbKind, rbThen: stop.rbThen, rbSet: stop.rbSet, kind: stop.kind };
     });
   }
 
@@ -252,6 +252,7 @@
       // a train that turns back the way it came is a new service, not a
       // through train (T8 Macarthur - Central - Revesby at weekends)
       if (!loop && a.s.length > 1 && b.s.length > 1 && a.s[a.s.length - 2][0] === b.s[1][0]) continue;
+      if (b.s[0][1] + (b.s[0][2] || 0) - last[1] > THROUGH_WAIT) continue;   // a layover is a new service
       if (!loop && !lineView) continue;
       // a lap that goes on out (Central, the loop, Central, Sydenham) joins
       // as far as Central and shows where it carries on to
@@ -679,6 +680,9 @@
     return `<td${attr}>${shown}${flag}${plat}</td>`;
   }
 
+  // longest wait (s) for a train to count as running straight on as its next run
+  const THROUGH_WAIT = 600;
+
   // Central's parts as a headboard says them
   const HEAD = (name) => (/^(Sydney Terminal|Central Electric|Central ESR)$/.test(name) ? "Central" : name);
 
@@ -749,7 +753,8 @@
         const cellOf = (t) => {
           const x = t.byKey.get(key);
           if (!x || !x.join) return "";
-          if (x.rbRun) return `${lineBadge(x.rbLine, x.rbKind)}<b>${esc(x.rbRun)}</b>`;
+          // a change of formation (sets attached or divided) shows the new one
+          if (x.rbRun) return `${lineBadge(x.rbLine, x.rbKind)}<b>${esc(x.rbRun)}</b>${x.rbSet ? `<span class="work"> now ${esc(set(x.rbSet))}</span>` : ""}`;
           return t.rb ? `${badge(t)}<b>${esc(t.rb)}</b>` : "";
         };
         const then = trips.some((t) => t.byKey.has(key) && t.byKey.get(key).rbThen);
@@ -776,16 +781,23 @@
       const stops = t.s.map((x) => { const y = [...x]; y.kind = t.e ? t.c || "ecs" : ""; return y; });
       if (i) {
         const prev = runs[i - 1], last = s[s.length - 1], first = stops[0];
-        const linked = prev.f && prev.f[0] === t.r && last[0] === first[0];
+        // the same service carrying on: formed straight on at the same place,
+        // not turning back, not sitting there (a wait for another set to
+        // attach at Gosford, a layover); anything else is "Then"
+        const linked = prev.f && prev.f[0] === t.r && last[0] === first[0] &&
+          first[1] + (first[2] || 0) - last[1] <= THROUGH_WAIT &&
+          !(prev.s.length > 1 && t.s.length > 1 && prev.s[prev.s.length - 2][0] === t.s[1][0]);
         if (linked) {
           const join = [first[0], last[1], first[1] + (first[2] || 0) - last[1], first[3] || last[3] || "", ""];
           join.isJoin = true; join.rbRun = t.r; join.rbLine = t.line; join.rbKind = t.c; join.kind = first.kind;
+          if (t.v !== prev.v) join.rbSet = t.v;
           s[s.length - 1] = join;
           stops.shift();
         } else {
           first.isJoin = true; first.rbRun = t.r; first.rbLine = t.line; first.rbThen = true;
           // the "Then" row goes after the last stop of the one before
           s[s.length - 1].isJoin = true; s[s.length - 1].rbRun = t.r; s[s.length - 1].rbLine = t.line; s[s.length - 1].rbKind = t.c; s[s.length - 1].rbThen = true;
+          if (t.v !== prev.v) s[s.length - 1].rbSet = t.v;
           first.isJoin = false;
         }
       }
