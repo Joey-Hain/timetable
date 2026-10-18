@@ -1,0 +1,46 @@
+name: Build timetable data
+
+# Daily: download the Sydney Trains GTFS (it also carries the NSW TrainLink
+# intercity and regional trains) and publish the site's data files to the
+# `data` branch, which the site reads from raw.githubusercontent.com.
+on:
+  schedule:
+    - cron: "47 16 * * *"   # 03:47 Sydney (AEDT); 02:47 in winter
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download the timetable
+        env:
+          TFNSW_KEY: ${{ secrets.TFNSW_KEY }}
+        run: |
+          curl -fsS --retry 4 --retry-delay 20 --max-time 600 \
+            -H "Authorization: apikey ${TFNSW_KEY}" \
+            -o sydneytrains.zip https://api.transport.nsw.gov.au/v1/gtfs/schedule/sydneytrains
+          python -c "import zipfile; zipfile.ZipFile('sydneytrains.zip').testzip()"
+      - name: Build
+        run: python tools/build.py --gtfs sydneytrains.zip --out out | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Publish to the data branch
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          cd out
+          git init -q -b data
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Timetable data $(date -u +%Y-%m-%d)"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:data

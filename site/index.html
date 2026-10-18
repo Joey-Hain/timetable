@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timetable</title>
+  <meta name="robots" content="noai, noimageai">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <main class="page">
+    <div class="top-link"><a href="https://joeyhain.org/" target="_blank" rel="noopener">joeyhain.org</a></div>
+    <h1>Timetable</h1>
+
+    <section class="tools" aria-label="Options">
+      <label class="wide">Line or corridor
+        <select id="line"></select>
+      </label>
+      <label>Date
+        <input type="date" id="date">
+      </label>
+      <label>Direction
+        <select id="dir">
+          <option value="down">Down</option>
+          <option value="up">Up</option>
+        </select>
+      </label>
+      <label>Times from
+        <select id="from"></select>
+      </label>
+      <label>Times to
+        <select id="to"></select>
+      </label>
+      <label>Stations from
+        <select id="sfrom"></select>
+      </label>
+      <label>Stations to
+        <select id="sto"></select>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="pass">
+        <span>Passing times</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="plat">
+        <span>Platforms</span>
+      </label>
+    </section>
+
+    <p id="note" class="note" hidden></p>
+  </main>
+
+  <div id="table" class="tt-wrap"></div>
+
+  <div class="page">
+    <p class="key">Times are departures; the last time is the arrival. <span class="pass">|</span> passes without stopping,
+      <b>d</b> sets down only, <b>u</b> picks up only. Hover a time for arrival, departure and platform.</p>
+    <footer>Data: <a href="https://opendata.transport.nsw.gov.au/" target="_blank" rel="noopener">Transport for NSW Open Data</a>, CC BY 4.0<span id="updated"></span></footer>
+  </div>
+
+  <script src="/config.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
