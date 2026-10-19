@@ -73,7 +73,12 @@ window.TT_CONFIG = {
   //            regional train)
   interchanges: [
     { at: "Hamilton", lines: ["HUN", "CCN"], feeders: ["HUN"], split: ["Newcastle Interchange"] },
-    { at: ["Helensburgh", "Thirroul"], lines: ["SCO"], locals: ["Thirroul", "Waterfall"],
+    // South Coast expresses and all-stations trains: those from Waterfall at
+    // Helensburgh, those starting at Thirroul there (both on weekdays from
+    // the November 2026 timetable; Thirroul only at weekends)
+    { at: "Helensburgh", lines: ["SCO"], locals: ["Waterfall"], maxMinutes: 20,
+      express: ["Bulli", "Woonona", "Bellambi", "Corrimal", "Towradgi", "Fairy Meadow"] },
+    { at: "Thirroul", lines: ["SCO"], locals: ["Thirroul"], maxMinutes: 20,
       express: ["Bulli", "Woonona", "Bellambi", "Corrimal", "Towradgi", "Fairy Meadow"] },
     { at: "Kiama", lines: ["SCO"], side: ["Gerringong", "Berry", "Bomaderry (Nowra)"] },
     { at: "Campbelltown", atUp: "Macarthur", lines: ["SHL", "T8"], feeders: ["SHL"] },

@@ -601,7 +601,10 @@
     // which has to be booked)
     const ok = (t) => !ix.only || ix.only.includes(t.line);
     // non-revenue trains (specials, charters) take no part in a change
-    const prim = trips.filter((t) => !t.e && ok(t) && !isSecondary(t) && calls(t, mk));
+    // an express / all-stations change: the other side is the expresses only
+    const skipIds = ix.express ? new Set(ix.express.map((name) => state.byName.get(name))) : null;
+    const express = (t) => !skipIds || !t.stops.some((x) => skipIds.has(x.st) && x.flag !== "p");
+    const prim = trips.filter((t) => !t.e && ok(t) && !isSecondary(t) && express(t) && calls(t, mk));
     const cells = new Map(), pairs = new Map(), arrows = [], arrowCells = new Map();
     const add = (t, html) => cells.set(t, (cells.get(t) ? cells.get(t) + "<br>" : "") + html);
     for (const t of feeders) {
