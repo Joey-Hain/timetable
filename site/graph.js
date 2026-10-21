@@ -7,7 +7,7 @@
   const $ = (id) => document.getElementById(id);
   const el = {
     line: $("line"), date: $("date"), sfrom: $("sfrom"), sto: $("sto"), via: $("via"),
-    from: $("from"), to: $("to"), nonrev: $("nonrev"), note: $("note"), graph: $("graph"), updated: $("updated"),
+    dir: $("dir"), from: $("from"), to: $("to"), nonrev: $("nonrev"), note: $("note"), graph: $("graph"), updated: $("updated"),
   };
   const state = { index: null, stations: null, track: {}, files: new Map(), view: null };
   const params = new URLSearchParams(location.search);
@@ -60,7 +60,7 @@
     el.date.min = state.index.first; el.date.max = state.index.last;
     const today = sydneyToday();
     el.date.value = today >= state.index.first && today <= state.index.last ? today : state.index.first;
-    for (const [k, e] of [["l", el.line], ["d", el.date], ["from", el.from], ["to", el.to]]) {
+    for (const [k, e] of [["l", el.line], ["d", el.date], ["dir", el.dir], ["from", el.from], ["to", el.to]]) {
       const v = params.get(k);
       if (v && e === el.date) { if (v >= state.index.first && v <= state.index.last) e.value = v; }
       else if (v && [...e.options].some((o) => o.value === v)) e.value = v;
@@ -78,6 +78,7 @@
     if (el.sfrom.value) p.set("sf", name(+el.sfrom.value));
     if (el.sto.value) p.set("st", name(+el.sto.value));
     if (el.via.value) p.set("via", name(+el.via.value));
+    p.set("dir", el.dir.value);
     p.set("from", el.from.value); p.set("to", el.to.value);
     if (el.nonrev.checked) p.set("nr", "1");
     history.replaceState(null, "", "?" + p.toString());
@@ -194,20 +195,36 @@
     if (path.some((s) => seen.has(s) || !seen.add(s))) return null;   // goes back over itself
     const km = [0];
     for (let i = 1; i < path.length; i++) km.push(km[i - 1] + edgeLength(path[i - 1], path[i]) / 1000);
-    return { path, km, at: new Map(path.map((s, i) => [s, i])) };
+    // up = towards Sydney: towards whichever end of the route is nearer Central
+    const upTop = crow(state.stations[path[0]].slice(1), CENTRAL) <= crow(state.stations[path[path.length - 1]].slice(1), CENTRAL);
+    return { path, km, at: new Map(path.map((s, i) => [s, i])), upTop };
   }
 
-  // each train's runs along the route: [[time, km], ...]; it breaks where the
-  // train leaves the route
+  // each train's runs along the route in the direction shown: [[time, km],
+  // ...]; a run breaks where the train leaves the route or turns back
   function runsOf(t, route) {
     const out = [];
-    let cur = [], last = -1;
-    const flush = () => { if (cur.length > 1) out.push(cur); cur = []; last = -1; };
+    let cur = [], last = -1, way = 0;
+    const flush = () => {
+      if (cur.length > 1 && way) {
+        const up = (way < 0) === route.upTop;   // km falls going towards the top
+        if (up === (el.dir.value === "up")) out.push(cur);
+      }
+      cur = []; last = -1; way = 0;
+    };
     const n = t.s.length;
     t.s.forEach((s, k) => {
       const i = route.at.get(s[0]);
       if (i === undefined) { flush(); return; }
       if (last >= 0 && i === last) flush();
+      if (last >= 0) {
+        const w = Math.sign(i - last);
+        if (way && w !== way) {   // turns back: start again from here
+          const keep = cur[cur.length - 1];
+          flush(); cur.push(keep);
+        }
+        way = w;
+      }
       // a train waiting to start, or standing after it ends, isn't drawn
       const arr = k === 0 ? s[1] + (s[2] || 0) : s[1], dep = k === n - 1 ? s[1] : s[1] + (s[2] || 0);
       cur.push([arr, route.km[i]]);
@@ -397,7 +414,7 @@
     const ymd = (s) => dmy(new Date(`${s}T12:00:00+10:00`));
     el.updated.textContent = `Timetable as at ${dmy(built)} for period ${ymd(state.index.first)} - ${ymd(state.index.last)}`;
     el.line.addEventListener("change", () => render(true));
-    for (const e of [el.date, el.sfrom, el.sto, el.via, el.from, el.to, el.nonrev]) e.addEventListener("change", () => render(false));
+    for (const e of [el.date, el.sfrom, el.sto, el.dir, el.via, el.from, el.to, el.nonrev]) e.addEventListener("change", () => render(false));
     const more = $("more"), tools = more.closest(".tools");
     more.addEventListener("click", () => {
       tools.classList.toggle("open");
