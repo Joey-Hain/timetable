@@ -12,6 +12,9 @@ interleaved in the order they run.
 - `site/` is the static page (Cloudflare Pages, output dir `site`), reading
   the data from `raw.githubusercontent.com`.
 - Corridors and timed changes (interchanges) are listed in `site/config.js`.
+- `site/graph.html` draws a train graph (time across, distance down) for a
+  line or corridor along one continuous route the user picks, using track
+  distances the build measures along the GTFS route shapes (`track.json`).
 
 The GTFS is a rolling window about 30 days ahead, so a new timetable shows up
 here once Transport for NSW loads it into the feed. `Probe feeds` (Actions)

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Graph</title>
+  <meta name="robots" content="noai, noimageai">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <a href="/">Timetable</a>
+      <a href="/graph" class="active">Graph</a>
+      <a href="https://joeyhain.org/" target="_blank" rel="noopener">joeyhain.org</a>
+    </nav>
+  </aside>
+  <main class="content">
+    <h1>Graph</h1>
+
+    <section class="tools" aria-label="Options">
+      <label class="wide">Line or corridor
+        <select id="line"></select>
+      </label>
+      <label>Date
+        <input type="date" id="date">
+      </label>
+      <label>Top
+        <select id="sfrom"></select>
+      </label>
+      <label>Bottom
+        <select id="sto"></select>
+      </label>
+      <button type="button" id="more" class="more" aria-expanded="false">More options</button>
+      <label class="opt">Via
+        <select id="via"></select>
+      </label>
+      <label class="opt">Times from
+        <select id="from"></select>
+      </label>
+      <label class="opt">Times to
+        <select id="to"></select>
+      </label>
+      <label class="check opt">
+        <input type="checkbox" id="nonrev">
+        <span>Non-revenue</span>
+      </label>
+    </section>
+
+    <p id="note" class="note" hidden></p>
+  </main>
+  </div>
+
+  <div id="graph" class="gr-wrap"></div>
+
+  <div class="page">
+    <footer><span id="updated"></span><br>Data: <a href="https://opendata.transport.nsw.gov.au/" target="_blank" rel="noopener">Transport for NSW Open Data</a>, CC BY 4.0</footer>
+  </div>
+
+  <script src="/config.js"></script>
+  <script src="/graph.js"></script>
+</body>
+</html>

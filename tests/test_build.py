@@ -23,10 +23,14 @@ FILES = {
     "vehicle_categories.txt": "vehicle_category_id,vehicle_category_name\nT8,8 car Tangara\n",
     "calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n"
                     "WD,1,1,1,1,1,0,0,20261116,20261122\n",
-    "trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,vehicle_category_id\n"
-                 "R4,WD,10A.1.1.1.T.8.1,Empty Train,0,T8\n"
-                 "R4,WD,11B.1.1.1.T.8.2,Central,1,T8\n"
-                 "NR,WD,99X.1.1.1.T.8.3,Empty Train,0,T8\n",
+    "trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,vehicle_category_id,shape_id\n"
+                 "R4,WD,10A.1.1.1.T.8.1,Empty Train,0,T8,SH\n"
+                 "R4,WD,11B.1.1.1.T.8.2,Central,1,T8,SH\n"
+                 "NR,WD,99X.1.1.1.T.8.3,Empty Train,0,T8,RTTA_REV\n",
+    # the line bows out between Sydenham and Hurstville: track longer than the crow flies
+    "shapes.txt": "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n"
+                  "SH,-33.8832,151.2065,1\nSH,-33.8916,151.1985,2\nSH,-33.9150,151.1670,3\n"
+                  "SH,-33.9500,151.1600,4\nSH,-33.9670,151.1020,5\n",
     "stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence,stop_headsign,pickup_type,drop_off_type\n"
                       # empty to Central, then in service, passes Sydenham, ends empty past Hurstville
                       "10A.1.1.1.T.8.1,08:00:00,08:02:00,C1,1,Hurstville,0,1\n"
@@ -65,6 +69,12 @@ def main():
         assert up["s"][0][1] == 25 * 3600 + 600, "times past midnight kept"
         ecs = json.loads((d / "out" / "lines" / "X" / f"{idx['lines']['X']['dates']['2026-11-17']}.json").read_text())["trips"]
         assert [t["r"] for t in ecs] == ["99X"] and ecs[0]["c"] == "ecs" and all(x[-1] == "p" for x in ecs[0]["s"])
+        track = json.loads((d / "out" / "track.json").read_text())
+        rs = track[",".join(str(i) for i in sorted((st.index("Redfern"), st.index("Sydenham"))))]
+        sh = track[",".join(str(i) for i in sorted((st.index("Sydenham"), st.index("Hurstville"))))]
+        crow = build.dist_km((-33.9150, 151.1670), (-33.9670, 151.1020)) * 1000
+        assert 3500 < rs < 4200, rs
+        assert sh > crow * 1.05, (sh, crow)
         print("ok")
 
 

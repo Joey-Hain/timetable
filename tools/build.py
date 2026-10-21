@@ -6,6 +6,7 @@ Turn the Sydney Trains GTFS into the files the site reads.
 Writes
   out/index.json              lines, their dates and which file holds each date
   out/stations.json           [[name, lat, lon], ...]; trips refer to stations by index
+  out/track.json              {"a,b": metres} track distance between neighbouring stations (indices)
   out/lines/<line>/<hash>.json   one service day of a line (days with identical
                                  trains share a file)
 
@@ -115,6 +116,75 @@ def service_dates(z) -> dict[str, set[date]]:
     for c in rows(z, "calendar_dates.txt"):
         d = ymd(c["date"])
         (out[c["service_id"]].add if c["exception_type"] == "1" else out[c["service_id"]].discard)(d)
+    return out
+
+
+def track_lengths(z, raw, stop_station, trips, stop_times) -> dict[str, int]:
+    """Track distance in metres between stations next to each other in some
+    train's stops (passes included), keyed "a,b" by station index (a < b).
+    Measured along the feed's route shapes: each stop's platform is placed on
+    its trip's shape, going forward, and the distance between neighbours is
+    the length of shape between them; the median over every train is kept.
+    Pairs a shape doesn't follow (a stop more than 400 m off it) are left out
+    and the site falls back to the straight line."""
+    if "shapes.txt" not in z.namelist():
+        return {}
+    k = math.cos(math.radians(CENTRAL[0]))
+    def xy(lat, lon):
+        return (float(lon) * k * 111320, float(lat) * 110540)
+    pts = defaultdict(list)
+    for r in rows(z, "shapes.txt"):
+        if not r["shape_id"].startswith("RTTA"):   # empty-run shapes are placeholders
+            pts[r["shape_id"]].append((int(r["shape_pt_sequence"]), r["shape_pt_lat"], r["shape_pt_lon"]))
+    shapes = {}
+    for sid, v in pts.items():
+        v.sort()
+        line = [xy(a, b) for _, a, b in v]
+        cum = [0.0]
+        for i in range(1, len(line)):
+            cum.append(cum[-1] + math.dist(line[i - 1], line[i]))
+        shapes[sid] = (line, cum)
+    seen = set()
+    found = defaultdict(list)
+    for tid, t in trips.items():
+        shape = shapes.get(t.get("shape_id", ""))
+        if not shape:
+            continue
+        sids = tuple(x["stop_id"] for x in sorted(stop_times.get(tid, ()), key=lambda x: int(x["stop_sequence"]))
+                     if x["stop_id"] in stop_station and x["stop_id"] in raw)
+        if (t["shape_id"], sids) in seen:
+            continue
+        seen.add((t["shape_id"], sids))
+        line, cum = shape
+        i, pos, prev = 0, 0.0, None
+        for sid in sids:
+            p = xy(raw[sid]["stop_lat"], raw[sid]["stop_lon"])
+            limit = pos + math.dist(p, line[i]) * 3 + 3000
+            best = (1e18, i, pos)
+            j = i
+            while j < len(line) - 1 and cum[j] <= limit:
+                (ax, ay), (bx, by) = line[j], line[j + 1]
+                dx, dy = bx - ax, by - ay
+                l2 = dx * dx + dy * dy
+                f = 0.0 if l2 == 0 else max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / l2))
+                d = math.hypot(p[0] - ax - dx * f, p[1] - ay - dy * f)
+                if d < best[0]:
+                    best = (d, j, cum[j] + f * math.sqrt(l2))
+                j += 1
+            if best[0] > 400:
+                prev = None
+                continue
+            _, i, along = best
+            here = stop_station[sid]
+            if prev and prev[0] != here:
+                found[tuple(sorted((prev[0], here)))].append(along - prev[1])
+            prev, pos = (here, along), along
+    out = {}
+    for (a, b), v in found.items():
+        v.sort()
+        m = v[len(v) // 2]
+        if m > 0:
+            out[f"{a},{b}"] = round(m)
     return out
 
 LETTERS = "ABCDEFGHJKLMNPRSTUVWXYZ"   # run suffixes skip I, O and Q
@@ -242,6 +312,7 @@ def build(gtfs: Path, out: Path, today: date | None = None):
                 e[1], e[4] = secs(a), here
             e[2] = e[2] or st["pickup_type"] != "1"
     links = link_workings(workings, span)
+    track = track_lengths(z, raw, stop_station, {tid: t for tid, (_, t, _) in trip_meta.items()}, stop_times)
 
     by_line_day: dict[tuple[str, date], list] = defaultdict(list)
     for tid, (line, t, days) in trip_meta.items():
@@ -400,6 +471,7 @@ def build(gtfs: Path, out: Path, today: date | None = None):
         e["dates"][d.isoformat()] = h
     used = {s for (line, d), trips in by_line_day.items() for t in trips for s, *_ in t["s"]}
     (out / "stations.json").write_text(json.dumps(stations, separators=(",", ":")))
+    (out / "track.json").write_text(json.dumps(track, separators=(",", ":")))
     all_dates = sorted({d for e in index_lines.values() for d in e["dates"]})
     index = {
         "built": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

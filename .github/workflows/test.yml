@@ -13,3 +13,4 @@ jobs:
           python-version: "3.12"
       - run: python tests/test_build.py
       - run: node -e "new Function(require('fs').readFileSync('site/app.js','utf8'))"
+      - run: node -e "new Function(require('fs').readFileSync('site/graph.js','utf8'))"
