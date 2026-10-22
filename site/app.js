@@ -127,7 +127,9 @@
       // a shuttle's trip back from the far end (Olympic Park - Lidcombe) meets
       // Lidcombe as a round trip's second visit
       const n = trip.dir === "down" && !trip.round ? total.get(st) - k + 1 : k + (trip.back && st !== trip.s[0][0] ? 1 : 0);
-      const last = i === trip.s.length - 1;
+      // the end of a run, even with another run after it in the same column
+      // ("Then"): the time it gets in, not when the next one leaves
+      const last = i === trip.s.length - 1 || !!stop.end;
       // picking up only at the start / setting down only at the end goes without saying
       if ((i === 0 && flag === "u") || (last && flag === "d")) flag = "";
       const base = `${st}#${n}`;
@@ -810,6 +812,7 @@
         } else {
           first.isJoin = true; first.rbRun = t.r; first.rbLine = t.line; first.rbThen = true;
           // the "Then" row goes after the last stop of the one before
+          s[s.length - 1].end = true;
           s[s.length - 1].isJoin = true; s[s.length - 1].rbRun = t.r; s[s.length - 1].rbLine = t.line; s[s.length - 1].rbKind = t.c; s[s.length - 1].rbThen = true;
           if (t.v !== prev.v) s[s.length - 1].rbSet = t.v;
           first.isJoin = false;
